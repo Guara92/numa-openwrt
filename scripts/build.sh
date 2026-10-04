@@ -8,7 +8,7 @@ set -eu
 
 : "${VARIANT:?set VARIANT=generic-musl|generic-mimalloc|cortex-a73-musl|cortex-a73-mimalloc}"
 cpu=${VARIANT%-*}
-alloc=${VARIANT#*-}
+alloc=${VARIANT##*-}
 case "$cpu" in generic|cortex-a73) ;; *) echo "bad cpu '$cpu' in VARIANT" >&2; exit 2 ;; esac
 case "$alloc" in musl|mimalloc) ;; *) echo "bad alloc '$alloc' in VARIANT" >&2; exit 2 ;; esac
 

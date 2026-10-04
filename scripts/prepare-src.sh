@@ -39,6 +39,9 @@ rm -rf "$src_dir"
 # ref (the promisor remote rejects "not our ref"), which breaks the cherry-pick.
 git clone --quiet "https://github.com/$repo.git" "$src_dir"
 git -C "$src_dir" checkout --quiet --detach "$tag"
+# CI runners have no git identity; cherry-pick --continue needs one.
+git -C "$src_dir" config user.name "numa-openwrt build"
+git -C "$src_dir" config user.email "numa-openwrt@users.noreply.github.com"
 
 got=$(git -C "$src_dir" rev-parse HEAD)
 [ "$got" = "$commit" ] || { echo "tag $tag is $got, lock pins $commit" >&2; exit 1; }

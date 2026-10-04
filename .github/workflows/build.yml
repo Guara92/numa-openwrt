@@ -92,15 +92,18 @@ jobs:
         with:
           toolchain: ${{ needs.config.outputs.rust }}
           targets: aarch64-unknown-linux-musl
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
-        with:
-          key: ${{ matrix.cpu }}-${{ matrix.alloc }}
       - name: Deps
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools qemu-user dnsutils file llvm
       - name: prepare-src
         run: sh scripts/prepare-src.sh ${{ matrix.alloc }}
+      # After prepare-src: the Cargo workspace lives in src/, so this is the
+      # first point a lockfile exists to key the cache on.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: ${{ matrix.cpu }}-${{ matrix.alloc }}
+          workspaces: src
       - name: check-features (cortex-a73)
         if: matrix.cpu == 'cortex-a73'
         run: sh scripts/check-features.sh
