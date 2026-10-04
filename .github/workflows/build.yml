@@ -61,9 +61,9 @@ jobs:
           rev=$(lock_get build rev)
           semver=${tag#v}
           if [ "$source" = pr ]; then
-            matrix='[{"cpu":"generic","alloc":"musl"},{"cpu":"generic","alloc":"mimalloc"},{"cpu":"cortex-a73","alloc":"musl"},{"cpu":"cortex-a73","alloc":"mimalloc"}]'
+            matrix='{"include":[{"cpu":"generic","alloc":"musl"},{"cpu":"generic","alloc":"mimalloc"},{"cpu":"cortex-a73","alloc":"musl"},{"cpu":"cortex-a73","alloc":"mimalloc"}]}'
           else
-            matrix='[{"cpu":"generic","alloc":"mimalloc"},{"cpu":"cortex-a73","alloc":"mimalloc"}]'
+            matrix='{"include":[{"cpu":"generic","alloc":"mimalloc"},{"cpu":"cortex-a73","alloc":"mimalloc"}]}'
           fi
           {
             echo "rust=$(lock_get '' rust)"
