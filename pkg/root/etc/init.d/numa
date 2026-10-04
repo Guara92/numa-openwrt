@@ -1,0 +1,54 @@
+#!/bin/sh /etc/rc.common
+# procd service for numa. Upstream ships no OpenWrt unit: `numa service start`
+# targets systemd. START=20 puts us after dnsmasq (19), which must already have
+# released :53.
+
+# shellcheck disable=SC2034  # read by /etc/rc.common
+START=20
+STOP=10
+USE_PROCD=1
+
+PROG=/usr/sbin/numa
+CONFIG_FILE=/etc/numa/numa.toml
+STATE_DIR=/etc/numa/state
+
+start_service() {
+    # Refuse to start while dnsmasq still owns :53: numa would bind-fail and
+    # the router would have no resolver at all.
+    port=$(uci -q get dhcp.@dnsmasq[0].port)
+    if [ -z "$port" ] || [ "$port" = "53" ]; then
+        logger -t numa "dnsmasq still on :53; refusing to start (run numa-ctl enable)"
+        return 1
+    fi
+
+    mkdir -p "$STATE_DIR"
+    chmod 700 "$STATE_DIR"
+
+    # numa's data_dir must be persistent; /var is tmpfs on this device.
+    if [ ! -L /var/lib/numa ]; then
+        mkdir -p /var/lib/numa
+        cp -a /var/lib/numa/. "$STATE_DIR/" 2>/dev/null || true
+        rm -rf /var/lib/numa
+        ln -sfn "$STATE_DIR" /var/lib/numa
+    fi
+
+    # HOME=/root makes upstream config_dir() pick /var/lib/numa (the symlink).
+    RUST_LOG=${RUST_LOG:-info}
+    # shellcheck disable=SC1091  # optional; absent on a fresh install
+    [ -f /etc/numa/numa.env ] && . /etc/numa/numa.env
+
+    procd_open_instance
+    procd_set_param command "$PROG" run "$CONFIG_FILE"
+    procd_set_param env HOME=/root RUST_LOG="$RUST_LOG"
+    procd_set_param respawn 3600 5 5
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_set_param limits nofile="65535 65535"
+    procd_set_param file "$CONFIG_FILE"
+    procd_close_instance
+}
+
+stop_service() {
+    # nothing beyond procd's default signal handling
+    :
+}

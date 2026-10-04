@@ -1,0 +1,19 @@
+# usign secret key - never commit
+*.sec
+
+# Agent brief: contains live site data (IPs/hostnames), keep local only
+PLAN.md
+
+# Downloaded upstream release artifacts
+*.tar.gz
+*.sha256
+
+# Local build / package output
+bin/
+build/
+dist/
+src/
+
+# Editor and OS droppings
+.DS_Store
+*.swp

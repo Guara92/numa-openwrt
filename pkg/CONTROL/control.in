@@ -1,0 +1,11 @@
+Package: numa
+Version: @VERSION@
+Architecture: aarch64_cortex-a53
+Section: net
+Priority: optional
+Maintainer: numa-openwrt
+Description: Portable DNS resolver (upstream numa), static musl build.
+ Built from @UPSTREAM_TAG@ (@UPSTREAM_COMMIT@) plus the mimalloc-on-musl
+ overlay (PR #395, @MIMALLOC_HEAD@). Installs the binary and a procd service.
+ The config is generated on the router with `numa-ctl gen-config`; nothing is
+ started on install.

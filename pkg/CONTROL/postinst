@@ -1,0 +1,8 @@
+#!/bin/sh
+# Runs at ipk unpack time. Starts nothing: cutover is a manual `numa-ctl` step.
+[ -n "$IPKG_INSTROOT" ] && exit 0
+
+mkdir -p /etc/numa/state
+chmod 700 /etc/numa/state
+
+exit 0

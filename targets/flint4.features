@@ -1,0 +1,4 @@
+# cpuinfo feature names present on the GL-BE14000 (MT7988A, 4x Cortex-A73).
+# `scripts/check-features.sh` fails if a rustc target-cpu=cortex-a73 feature
+# maps to a name absent here.
+fp asimd evtstrm aes pmull sha1 sha2 crc32 cpuid

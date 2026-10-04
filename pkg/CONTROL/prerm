@@ -1,0 +1,11 @@
+#!/bin/sh
+# Runs before the ipk's files are removed. On upgrade, keep serving.
+[ "$PKG_UPGRADE" = 1 ] && exit 0
+[ -n "$IPKG_INSTROOT" ] && exit 0
+
+# Restore dnsmasq to :53 before the binary disappears.
+if [ -x /usr/sbin/numa-ctl ]; then
+    /usr/sbin/numa-ctl disable >/dev/null 2>&1 || true
+fi
+
+exit 0

@@ -1,0 +1,36 @@
+# Smoke-test config, not a deployment config.
+# Placeholders @DATA_DIR@ and @CANARY@ are substituted by scripts/smoke.sh.
+
+[server]
+bind_addr     = "[::]:15353"
+api_port      = 15380
+api_bind_addr = "127.0.0.1"
+data_dir      = "@DATA_DIR@"
+allow_from    = ["127.0.0.0/8", "::1/128", "10.99.0.0/24", "10.99.1.0/24", "fd99::/64"]
+
+[upstream]
+mode     = "forward"
+address  = ["https://9.9.9.9/dns-query"]
+fallback = ["9.9.9.9"]
+
+[blocking]
+enabled = true
+lists   = ["file://@CANARY@"]
+
+[[zones]]
+domain      = "canary.numa-ctl.internal"
+record_type = "A"
+value       = "192.0.2.53"
+ttl         = 60
+
+[proxy]
+enabled = false
+
+[dot]
+enabled = false
+
+[mobile]
+enabled = false
+
+[lan]
+enabled = false

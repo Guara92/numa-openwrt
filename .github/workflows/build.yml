@@ -1,0 +1,187 @@
+name: build
+
+on:
+  pull_request:
+    paths:
+      - upstream.lock
+      - scripts/**
+      - pkg/**
+      - targets/**
+      - tests/**
+      - .github/workflows/build.yml
+  push:
+    branches: [main]
+    paths:
+      - upstream.lock
+      - scripts/**
+      - pkg/**
+      - targets/**
+      - tests/**
+      - .github/workflows/build.yml
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  config:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.read.outputs.matrix }}
+      rust: ${{ steps.read.outputs.rust }}
+      publish: ${{ steps.read.outputs.publish }}
+      rev: ${{ steps.read.outputs.rev }}
+      tag: ${{ steps.read.outputs.tag }}
+      commit: ${{ steps.read.outputs.commit }}
+      pr: ${{ steps.read.outputs.pr }}
+      head: ${{ steps.read.outputs.head }}
+      source: ${{ steps.read.outputs.source }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - id: read
+        run: |
+          set -eu
+          lock_get() {
+            awk -v sec="$1" -v key="$2" '
+              /^[[:space:]]*\[/ { s=$0; gsub(/[][[:space:]]/, "", s); next }
+              s==sec { line=$0; sub(/#.*/,"",line)
+                n=split(line,kv,"="); if (n<2) next
+                k=kv[1]; gsub(/[[:space:]]/,"",k); if (k!=key) next
+                v=kv[2]; gsub(/^[[:space:]]+|[[:space:]]+$/,"",v); gsub(/"/,"",v); print v; exit }' upstream.lock
+          }
+          source=$(lock_get mimalloc source)
+          if [ "$source" = pr ]; then
+            matrix='[{"cpu":"generic","alloc":"musl"},{"cpu":"generic","alloc":"mimalloc"},{"cpu":"cortex-a73","alloc":"musl"},{"cpu":"cortex-a73","alloc":"mimalloc"}]'
+          else
+            matrix='[{"cpu":"generic","alloc":"mimalloc"},{"cpu":"cortex-a73","alloc":"mimalloc"}]'
+          fi
+          {
+            echo "rust=$(lock_get '' rust)"
+            echo "matrix=$matrix"
+            echo "publish=$(lock_get build publish)"
+            echo "rev=$(lock_get build rev)"
+            echo "tag=$(lock_get upstream tag)"
+            echo "commit=$(lock_get upstream commit)"
+            echo "pr=$(lock_get mimalloc pr)"
+            echo "head=$(lock_get mimalloc head)"
+            echo "source=$source"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: config
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.config.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
+        with:
+          toolchain: ${{ needs.config.outputs.rust }}
+          targets: aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: ${{ matrix.cpu }}-${{ matrix.alloc }}
+      - name: Deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools qemu-user dnsutils file llvm
+      - name: prepare-src
+        run: sh scripts/prepare-src.sh ${{ matrix.alloc }}
+      - name: check-features (cortex-a73)
+        if: matrix.cpu == 'cortex-a73'
+        run: sh scripts/check-features.sh
+      - name: build
+        env:
+          VARIANT: ${{ matrix.cpu }}-${{ matrix.alloc }}
+        run: sh scripts/build.sh
+      - name: qemu ISA gate (cortex-a73)
+        if: matrix.cpu == 'cortex-a73'
+        env:
+          VARIANT: ${{ matrix.cpu }}-${{ matrix.alloc }}
+        run: |
+          set -eu
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUNNER="qemu-aarch64 -cpu cortex-a72"
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-C target-cpu=cortex-a73"
+          cargo test --release --locked --target aarch64-unknown-linux-musl --lib \
+            --manifest-path src/Cargo.toml -- --skip socket
+          qemu-aarch64 -cpu cortex-a72 "dist/numa-$VARIANT" --version
+      - name: smoke (native, dual-stack)
+        env:
+          VARIANT: ${{ matrix.cpu }}-${{ matrix.alloc }}
+        run: sudo -E sh scripts/smoke.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: numa-${{ matrix.cpu }}-${{ matrix.alloc }}
+          path: |
+            dist/numa-${{ matrix.cpu }}-${{ matrix.alloc }}
+            dist/numa-${{ matrix.cpu }}-${{ matrix.alloc }}.sha256
+            dist/numa-${{ matrix.cpu }}-${{ matrix.alloc }}.info
+          if-no-files-found: error
+
+  release:
+    needs: [config, build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # stable
+        with:
+          toolchain: ${{ needs.config.outputs.rust }}
+      - name: Build usign (pinned)
+        run: |
+          set -eu
+          git clone --quiet https://github.com/openwrt/usign.git /tmp/usign
+          git -C /tmp/usign checkout --quiet c4c72b1b07945ee192361dc751291a7c98d6adcd
+          cmake -S /tmp/usign -B /tmp/usign/build >/dev/null
+          cmake --build /tmp/usign/build >/dev/null
+      - name: Package
+        env:
+          VERSION: ${{ format('{0}-{1}', needs.config.outputs.tag, needs.config.outputs.rev) }}
+          PUBLISH_VARIANT: ${{ needs.config.outputs.publish }}
+        run: |
+          set -eu
+          ver=${VERSION#v}
+          PUBLISH_VARIANT="$PUBLISH_VARIANT" VERSION="$ver" sh scripts/mkipk.sh
+          USIGN=/tmp/usign/build/usign \
+            USIGN_SECRET_KEY="${{ secrets.USIGN_SECRET_KEY }}" \
+            VERSION="$ver" sh scripts/mkmanifest.sh
+      - name: Refuse to overwrite an existing release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REL_TAG: v${{ format('{0}-r{1}', replace(needs.config.outputs.tag, 'v', ''), needs.config.outputs.rev) }}
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$REL_TAG" >/dev/null 2>&1; then
+            echo "tag $REL_TAG already exists; bump build.rev" >&2
+            exit 1
+          fi
+      - name: Attest provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: |
+            dist/numa_*.ipk
+            dist/numa-*
+            dist/manifest.json
+      - name: Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: v${{ format('{0}-r{1}', replace(needs.config.outputs.tag, 'v', ''), needs.config.outputs.rev) }}
+          name: v${{ format('{0}-r{1}', replace(needs.config.outputs.tag, 'v', ''), needs.config.outputs.rev) }}
+          files: |
+            dist/numa_*.ipk
+            dist/numa-*
+            dist/manifest.json
+            dist/manifest.json.sig
+          fail_on_unmatched_files: true

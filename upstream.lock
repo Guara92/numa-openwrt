@@ -1,0 +1,17 @@
+# Pinned inputs for a reproducible build. Any mismatch fails the build.
+
+rust = "1.99.0"
+
+[upstream]
+repo   = "razvandimescu/numa"
+tag    = "v0.24.1"
+commit = "c7385c78512b81ee096d41e4b27dab8ebe5b8e7e"
+
+[mimalloc]
+source = "pr"                              # "pr" | "upstream" (after upstream release)
+pr     = 395
+head   = "a892fbadaa65fdb85697be194afd4092b13c4017"
+
+[build]
+publish = "cortex-a73-mimalloc"            # variant packaged in the ipk; "generic-mimalloc" = fallback
+rev     = 1                                # ipk version <upstream>-<rev>; release tag v<upstream>-r<rev>
