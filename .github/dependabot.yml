@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Keep SHA-pinned GitHub Actions current. Dependabot understands the
+  # `uses: owner/action@<sha> # vX.Y.Z` form and bumps both the SHA and the
+  # comment, so the "pin by SHA" rule holds.
+  #
+  # The Rust source and PR #395 overlay are NOT handled here: upstream.lock is
+  # updated by .github/workflows/watch-upstream.yml.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
+    groups:
+      # One PR for all action bumps: a single build.yml run instead of many.
+      github-actions:
+        patterns:
+          - "*"
