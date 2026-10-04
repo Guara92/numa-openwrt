@@ -40,6 +40,9 @@ jobs:
       pr: ${{ steps.read.outputs.pr }}
       head: ${{ steps.read.outputs.head }}
       source: ${{ steps.read.outputs.source }}
+      semver: ${{ steps.read.outputs.semver }}
+      ipk_version: ${{ steps.read.outputs.ipk_version }}
+      rel_tag: ${{ steps.read.outputs.rel_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - id: read
@@ -54,6 +57,9 @@ jobs:
                 v=kv[2]; gsub(/^[[:space:]]+|[[:space:]]+$/,"",v); gsub(/"/,"",v); print v; exit }' upstream.lock
           }
           source=$(lock_get mimalloc source)
+          tag=$(lock_get upstream tag)
+          rev=$(lock_get build rev)
+          semver=${tag#v}
           if [ "$source" = pr ]; then
             matrix='[{"cpu":"generic","alloc":"musl"},{"cpu":"generic","alloc":"mimalloc"},{"cpu":"cortex-a73","alloc":"musl"},{"cpu":"cortex-a73","alloc":"mimalloc"}]'
           else
@@ -63,12 +69,15 @@ jobs:
             echo "rust=$(lock_get '' rust)"
             echo "matrix=$matrix"
             echo "publish=$(lock_get build publish)"
-            echo "rev=$(lock_get build rev)"
-            echo "tag=$(lock_get upstream tag)"
+            echo "rev=$rev"
+            echo "tag=$tag"
             echo "commit=$(lock_get upstream commit)"
             echo "pr=$(lock_get mimalloc pr)"
             echo "head=$(lock_get mimalloc head)"
             echo "source=$source"
+            echo "semver=$semver"
+            echo "ipk_version=$semver-$rev"
+            echo "rel_tag=v$semver-r$rev"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -149,19 +158,18 @@ jobs:
           cmake --build /tmp/usign/build >/dev/null
       - name: Package
         env:
-          VERSION: ${{ format('{0}-{1}', needs.config.outputs.tag, needs.config.outputs.rev) }}
+          VERSION: ${{ needs.config.outputs.ipk_version }}
           PUBLISH_VARIANT: ${{ needs.config.outputs.publish }}
         run: |
           set -eu
-          ver=${VERSION#v}
-          PUBLISH_VARIANT="$PUBLISH_VARIANT" VERSION="$ver" sh scripts/mkipk.sh
+          PUBLISH_VARIANT="$PUBLISH_VARIANT" VERSION="$VERSION" sh scripts/mkipk.sh
           USIGN=/tmp/usign/build/usign \
             USIGN_SECRET_KEY="${{ secrets.USIGN_SECRET_KEY }}" \
-            VERSION="$ver" sh scripts/mkmanifest.sh
+            VERSION="$VERSION" sh scripts/mkmanifest.sh
       - name: Refuse to overwrite an existing release tag
         env:
           GH_TOKEN: ${{ github.token }}
-          REL_TAG: v${{ format('{0}-r{1}', replace(needs.config.outputs.tag, 'v', ''), needs.config.outputs.rev) }}
+          REL_TAG: ${{ needs.config.outputs.rel_tag }}
         run: |
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$REL_TAG" >/dev/null 2>&1; then
             echo "tag $REL_TAG already exists; bump build.rev" >&2
@@ -177,8 +185,8 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
-          tag_name: v${{ format('{0}-r{1}', replace(needs.config.outputs.tag, 'v', ''), needs.config.outputs.rev) }}
-          name: v${{ format('{0}-r{1}', replace(needs.config.outputs.tag, 'v', ''), needs.config.outputs.rev) }}
+          tag_name: ${{ needs.config.outputs.rel_tag }}
+          name: ${{ needs.config.outputs.rel_tag }}
           files: |
             dist/numa_*.ipk
             dist/numa-*
