@@ -114,7 +114,7 @@ jobs:
         env:
           VARIANT: ${{ matrix.cpu }}-${{ matrix.alloc }}
         run: sudo -E sh scripts/smoke.sh
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: numa-${{ matrix.cpu }}-${{ matrix.alloc }}
           path: |
@@ -133,7 +133,7 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
           merge-multiple: true
@@ -168,14 +168,14 @@ jobs:
             exit 1
           fi
       - name: Attest provenance
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             dist/numa_*.ipk
             dist/numa-*
             dist/manifest.json
       - name: Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: v${{ format('{0}-r{1}', replace(needs.config.outputs.tag, 'v', ''), needs.config.outputs.rev) }}
           name: v${{ format('{0}-r{1}', replace(needs.config.outputs.tag, 'v', ''), needs.config.outputs.rev) }}
