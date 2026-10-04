@@ -6,8 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   lock:
@@ -15,10 +14,19 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # A GitHub App installation token (unlike GITHUB_TOKEN) triggers
+      # build.yml on the PR it opens. Short-lived (1 h), no long-lived PAT.
+      - name: App token
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Update upstream.lock
         id: update
         env:
-          GH_TOKEN: ${{ secrets.BOT_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           set -eu
           lock_get() {
@@ -76,7 +84,7 @@ jobs:
         if: steps.update.outputs.changed == '1'
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
-          token: ${{ secrets.BOT_TOKEN }}
+          token: ${{ steps.app.outputs.token }}
           branch: bot/lock-${{ github.run_id }}
           commit-message: "chore(lock): track upstream"
           title: "chore(lock): track upstream"
