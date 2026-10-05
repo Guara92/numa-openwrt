@@ -1,16 +1,17 @@
 # numa bench (real aarch64, GL-BE14000)
 
-Data for upstream PR #395. Nothing here is filled in yet.
+Data for upstream PR #395. The variant grid and the router vs HA/Pi4 A/B are
+filled in below.
 
 ## Variants
 
 | variant | note |
 |---|---|
-| upstream official aarch64 | verify upstream sha256 |
+| upstream official aarch64 | baseline (= Pi4 build) |
 | generic-musl | |
-| generic-mimalloc | |
+| generic-mimalloc | best cached throughput |
 | cortex-a73-musl | |
-| cortex-a73-mimalloc | |
+| cortex-a73-mimalloc | published |
 
 Allocator and CPU effects are separable by comparing across the grid.
 
@@ -19,17 +20,22 @@ Allocator and CPU effects are separable by comparing across the grid.
 Target: `numa-ctl stage --variant V --keep` -> `[::]:5399` on the router (LAN
 zone input is allowed). Run off-peak; the router is live.
 
-Load from a wired LAN PC with `dnsperf`:
+Load from a wired LAN PC with `dnsperf` 2.x (note: `-q` is max outstanding,
+`-Q` is max qps):
 
 ```sh
-dnsperf -s <lan v4> -p 5399 -d cached.txt -c {1,8} -q 16 -l 30
+dnsperf -s <lan v4> -p 5399 -d cached.txt -c 8 -l 12
 ```
 
-`cached.txt` holds about 100 names, warmed once first. Order A B B A per pair,
-3 rounds.
+`cached.txt` = 52 popular names, warmed once (`-c 1 -l 3`). Grid = 3
+round-robin rounds over the 5 variants; the mimalloc pair is re-confirmed with
+order A B B A x3. Stop the staged process with
+`pgrep -f '^/tmp/numa-stage/numa'` - a bare `pkill -f /tmp/numa-stage/numa`
+matches the ssh shell itself and kills nothing.
 
-Metrics: qps; resolver CPU per query from `/proc/<pid>/stat`
-(`(utime+stime)/CLK_TCK/queries`); `VmRSS` idle and under load.
+Metrics: qps; `VmRSS`/`VmSize` from `/proc/<pid>/status`; resolver CPU per
+query from `/proc/<pid>/stat` (`(utime+stime)/CLK_TCK/queries`, not measured
+here).
 
 Microbench: `cargo bench --no-run --bench throughput` with the variant's flags,
 copy the binary to the router, run the `pipeline_parallel` group with 1/2/4
@@ -39,9 +45,35 @@ threads.
 
 ### End-to-end (dnsperf, cached)
 
-| variant | clients | qps | CPU/query | VmRSS idle | VmRSS load |
-|---|---|---|---|---|---|
-| | | | | | |
+Router, `:5399`, `cached.txt` = 52 names warmed first, `dnsperf` 2.x, `-c 8
+-l 12`. Means; mimalloc rows are 6 ABBA runs, the rest 3 round-robin rounds.
+
+| variant | mean qps | VmSize | VmRSS |
+|---|---|---|---|
+| upstream official aarch64 | 29 273 | 33 MB | ~20 MB |
+| generic-musl | 29 629 | 33 MB | ~20 MB |
+| cortex-a73-musl | 28 515 | 33 MB | ~20 MB |
+| generic-mimalloc | 41 014 | 1072 MB | ~36 MB |
+| cortex-a73-mimalloc | 38 512 | 1072 MB | ~36 MB |
+
+Effects (same run):
+
+| comparison | delta | reading |
+|---|---|---|
+| generic-musl -> generic-mimalloc | +39% | mimalloc |
+| cortex-a73-musl -> cortex-a73-mimalloc | +34% | mimalloc |
+| generic-musl -> cortex-a73-musl | -3.8% | a73 |
+| generic-mimalloc -> cortex-a73-mimalloc | -6.1% | a73 |
+| upstream -> generic-musl | +1% | noise |
+
+- mimalloc is the win (+34-39%): the allocator, not the ISA tuning.
+- `-C target-cpu=cortex-a73` costs ~4-6% cached throughput vs generic; kept
+  anyway (see Decision).
+- mem: mimalloc reserves ~1 GB **VmSize** (virtual arenas) but only ~20-36 MB
+  RSS; the live numa reports VmSize 1048 MB, VmRSS 24.5 MB, VmHWM 37 MB.
+  Address space, not RAM. Requirement: `overcommit_memory != 2` and no
+  `ulimit -v` (router: overcommit=0, `ulimit -v` unlimited).
+- not measured: CPU/query (efficiency), the cold/unique path, DNSSEC on.
 
 ### Microbench (`pipeline_parallel`)
 
@@ -51,7 +83,13 @@ threads.
 
 ## Decision
 
-`build.publish` in `upstream.lock` records the packaged variant. [TBD]
+`build.publish = cortex-a73-mimalloc` (kept, 2026-10-05).
+
+mimalloc is the real win and ships either way. The generic build is ~4-6%
+faster on cached throughput, judged marginal; a73 is kept for its ISA
+(aes/sha2/crc, relevant to TLS/DNSSEC paths if enabled later) and was not
+shown worse in any non-throughput dimension. Revisit with a CPU/query
+(efficiency) and a cold/unique pass before switching to `generic-mimalloc`.
 
 ## A/B: router vs HA add-on (Pi4), 2026-10-05
 
@@ -95,8 +133,9 @@ dnsperf -s <ip> -p 53 -d cached.txt -c 1 -Q 500 -l 15
 
 ### Reading
 
-- Throughput tracks CPU: the A73 build is ~1.4x the generic A72 build; the
-  `target-cpu` tuning and mimalloc sit in that delta.
+- Throughput tracks hardware + allocator: the variant grid above shows
+  mimalloc is the win (+34-39%) and the a73 ISA tuning is neutral-to-negative,
+  so the 1.43x vs the Pi4 comes from mimalloc plus A73-vs-A72, not the flags.
 - The low-load gap is **network, not numa**: TTL is 64 for both (same subnet,
   zero L3 hops), so the ~0.2 ms difference is the router's software packet
   path, not an extra hop. Net of RTT the resolver adds ~0.01 ms (router) vs
