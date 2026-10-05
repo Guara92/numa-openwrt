@@ -14,5 +14,5 @@ head   = "a892fbadaa65fdb85697be194afd4092b13c4017"
 
 [build]
 publish = "generic-mimalloc"               # variant packaged in the ipk; "cortex-a73-mimalloc" is also built
-rev     = 11                               # ipk version <upstream>-<rev>; release tag v<upstream>-r<rev>
+rev     = 12                               # ipk version <upstream>-<rev>; release tag v<upstream>-r<rev>
 describe = "v0.24.1-5-g373db8a"            # expected `git describe` after the overlay; mismatch warns
