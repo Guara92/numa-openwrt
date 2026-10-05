@@ -16,8 +16,10 @@ Nothing starts numa at install time.
 ## First install
 
 ```sh
-# on a PC: copy the trusted pubkey and bootstrap.sh to the router out-of-band
-scp bootstrap.sh pkg/root/etc/numa/keys/numa-openwrt.pub root@router:/tmp/
+# on a PC: copy the trusted pubkey and bootstrap.sh to the router out-of-band.
+# -O forces the legacy SCP protocol: OpenWrt ships no sftp-server and OpenSSH >= 9
+# defaults scp to SFTP, which fails with "sftp-server: not found".
+scp -O bootstrap.sh pkg/root/etc/numa/keys/numa-openwrt.pub root@router:/tmp/
 
 ssh root@router 'NUMA_OPENWRT_REPO=<owner>/numa-openwrt sh /tmp/bootstrap.sh /tmp/numa-openwrt.pub'
 numa-ctl gen-config --apply

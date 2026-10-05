@@ -68,8 +68,9 @@ All commands run on the router as `root`. The public key must be trusted
 out-of-band (see `bootstrap.sh`).
 
 ```sh
-# on a PC: copy the trusted pubkey and bootstrap.sh to the router
-scp bootstrap.sh pkg/root/etc/numa/keys/numa-openwrt.pub root@router:/tmp/
+# on a PC: copy the trusted pubkey and bootstrap.sh to the router.
+# -O: OpenWrt has no sftp-server and OpenSSH >= 9 defaults scp to SFTP.
+scp -O bootstrap.sh pkg/root/etc/numa/keys/numa-openwrt.pub root@router:/tmp/
 
 ssh root@router 'NUMA_OPENWRT_REPO=<owner>/numa-openwrt sh /tmp/bootstrap.sh /tmp/numa-openwrt.pub'
 numa-ctl gen-config --apply
