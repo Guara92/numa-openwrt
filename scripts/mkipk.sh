@@ -66,7 +66,16 @@ cp "$root/pkg/CONTROL/postinst" "$root/pkg/CONTROL/prerm" "$stage/CONTROL/"
 chmod 0755 "$stage/CONTROL/postinst" "$stage/CONTROL/prerm"
 
 mkdir -p "$root/dist"
-sh "$IPKG_BUILD" "$stage" "$root/dist" >/dev/null
+# ipkg-build archives the staging files' ownership as-is. Under fakeroot we can
+# chown the stage to root so the ipk ships root:root instead of the build user.
+if command -v fakeroot >/dev/null 2>&1; then
+    # shellcheck disable=SC2016  # $1/$2/$3 expand inside the inner sh -c
+    fakeroot sh -c 'chown -R 0:0 "$1" && sh "$2" "$1" "$3"' _ \
+        "$stage" "$IPKG_BUILD" "$root/dist" >/dev/null
+else
+    echo "WARN: fakeroot not found; ipk files will not be root-owned" >&2
+    sh "$IPKG_BUILD" "$stage" "$root/dist" >/dev/null
+fi
 ipk="$root/dist/numa_${version}_aarch64_cortex-a53.ipk"
 [ -f "$ipk" ] || { echo "ipkg-build produced no ipk in $root/dist" >&2; exit 1; }
 sha256sum "$ipk" > "$ipk.sha256"

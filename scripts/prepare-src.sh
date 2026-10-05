@@ -55,7 +55,10 @@ if [ "$alloc" = mimalloc ]; then
 
     base=$(git -C "$src_dir" merge-base FETCH_HEAD origin/main)
     for c in $(git -C "$src_dir" rev-list --reverse "$base..FETCH_HEAD"); do
-        if git -C "$src_dir" cherry-pick "$c" >/dev/null 2>&1; then
+        # Reuse the original committer date so the overlay commit hashes (and
+        # `git describe`) are identical across machines and builds.
+        cdate=$(git -C "$src_dir" show -s --format=%cI "$c")
+        if GIT_COMMITTER_DATE="$cdate" git -C "$src_dir" cherry-pick "$c" >/dev/null 2>&1; then
             continue
         fi
         # Only a Cargo.lock conflict is expected (the tag's lock vs the PR's).
@@ -68,7 +71,7 @@ if [ "$alloc" = mimalloc ]; then
         git -C "$src_dir" checkout HEAD -- Cargo.lock
         ( cd "$src_dir" && cargo fetch >/dev/null 2>&1 )
         git -C "$src_dir" add Cargo.lock
-        if ! git -C "$src_dir" -c core.editor=true cherry-pick --continue; then
+        if ! GIT_COMMITTER_DATE="$cdate" git -C "$src_dir" -c core.editor=true cherry-pick --continue; then
             echo "cherry-pick --continue failed for $c" >&2
             git -C "$src_dir" status --short >&2
             exit 1
