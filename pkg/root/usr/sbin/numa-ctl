@@ -572,7 +572,7 @@ cmd_gen_config() {
         if [ -n "$_a" ] && [ -n "$_m" ]; then
             _cidr=$(/bin/ipcalc.sh "$_a" "$_m" | sed -n 's/^NETWORK=\(.*\)/\1/p')
             _pfx=$(/bin/ipcalc.sh "$_a" "$_m" | sed -n 's/^PREFIX=\(.*\)/\1/p')
-            [ -n "$_cidr" ] && [ -n "$_pfx" ] && _allows="$_allows \"$_cidr/$_pfx\""
+            [ -n "$_cidr" ] && [ -n "$_pfx" ] && _allows="$_allows \"$_cidr/$_pfx\","
             [ -z "$_api" ] && _api="$_a"
         fi
         _i=0
@@ -580,7 +580,7 @@ cmd_gen_config() {
             _u=$(jsonfilter -s "$_j" -e '@["ipv6-address"]['"$_i"'].address' 2>/dev/null || true)
             [ -n "$_u" ] || break
             _um=$(jsonfilter -s "$_j" -e '@["ipv6-address"]['"$_i"'].mask' 2>/dev/null || true)
-            [ -n "$_um" ] && _allows="$_allows \"$_u/$_um\""
+            [ -n "$_um" ] && _allows="$_allows \"$_u/$_um\","
             _i=$((_i + 1))
         done
         _i=0
@@ -588,13 +588,13 @@ cmd_gen_config() {
             _g=$(jsonfilter -s "$_j" -e '@["ipv6-prefix-assignment"]['"$_i"'].address' 2>/dev/null || true)
             [ -n "$_g" ] || break
             _gm=$(jsonfilter -s "$_j" -e '@["ipv6-prefix-assignment"]['"$_i"'].mask' 2>/dev/null || true)
-            [ -n "$_gm" ] && _allows="$_allows \"$_g/$_gm\""
+            [ -n "$_gm" ] && _allows="$_allows \"$_g/$_gm\","
             _i=$((_i + 1))
         done
     done
 
     [ -n "$_api" ] || _api=127.0.0.1
-    _allows="$_allows \"fe80::/10\""
+    _allows="$_allows \"fe80::/10\","
     for _suf in $(uci -q get dhcp.@dnsmasq[0].local 2>/dev/null || true); do
         _suf=$(echo "$_suf" | tr -d /)
         [ -n "$_suf" ] && _suffix="$_suffix \"$_suf\","
@@ -604,7 +604,7 @@ cmd_gen_config() {
     _suffix="$_suffix \"168.192.in-addr.arpa\", \"d.f.ip6.arpa\""
 
     if [ "$_tailnet" = 1 ]; then
-        _allows="$_allows \"100.64.0.0/10\" \"fd7a:115c:a1e0::/48\""
+        _allows="$_allows \"100.64.0.0/10\" \"fd7a:115c:a1e0::/48\","
     fi
 
     _out=/etc/numa/numa.toml.new
@@ -615,15 +615,29 @@ api_port      = 5380
 api_bind_addr = "$_api"
 data_dir      = "/etc/numa/state"
 allow_from    = [$_allows]
+filter_aaaa   = false
+max_concurrent_resolutions = 512
+rebind_protect        = false
+rebind_allowlist      = []
+rebind_private_ranges = []
 
 [upstream]
-mode     = "forward"
-address  = ["https://9.9.9.9/dns-query", "https://149.112.112.112/dns-query"]
-fallback = ["9.9.9.9", "149.112.112.112"]
+mode       = "forward"
+address    = ["https://9.9.9.9/dns-query", "https://149.112.112.112/dns-query"]
+fallback   = ["9.9.9.9", "149.112.112.112"]
+timeout_ms = 800
+hedge_ms   = 50
 
 [blocking]
-lists = ["https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt",
+refresh_hours = 6
+lists = ["https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/pro-onlydomains.txt",
          "file:///etc/numa/canary-block.txt"]
+
+[cache]
+max_entries = 100000
+min_ttl     = 60
+max_ttl     = 86400
+warm        = ["cdn.jsdelivr.net"]
 
 [[forwarding]]
 suffix   = [$_suffix]

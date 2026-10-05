@@ -11,15 +11,30 @@ api_bind_addr = "<lan v4>"
 data_dir      = "/etc/numa/state"
 allow_from    = ["<v4 nets of lan/iot/guest>", "<ULA prefixes>", "fe80::/10", "<lan GUA prefix>"]
                # --tailnet adds "100.64.0.0/10", "fd7a:115c:a1e0::/48"
+filter_aaaa   = false             # true suppresses AAAA/HTTPS on IPv4-only nets
+max_concurrent_resolutions = 512  # cache-miss resolutions in flight; 0 is rejected upstream
+rebind_protect        = false     # opt-in; keep off for split-horizon (local -> dnsmasq)
+rebind_allowlist      = []        # domains exempt when rebind_protect = true
+rebind_private_ranges = []        # empty -> upstream built-in private/special ranges
 
 [upstream]
-mode     = "forward"
-address  = ["https://9.9.9.9/dns-query", "https://149.112.112.112/dns-query"]
-fallback = ["9.9.9.9", "149.112.112.112"]
+mode       = "forward"
+address    = ["https://9.9.9.9/dns-query", "https://149.112.112.112/dns-query"]
+fallback   = ["9.9.9.9", "149.112.112.112"]
+timeout_ms = 800                  # upstream default is 5000
+hedge_ms   = 50                   # parallel query after 50ms of silence; 0 disables
 
 [blocking]
-lists = ["https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/pro-onlydomains.txt",
+refresh_hours = 6                 # upstream default is 24
+lists = ["https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/pro-onlydomains.txt",
          "file:///etc/numa/canary-block.txt"]
+                                  # jsdelivr instead of raw.githubusercontent (avoids 403/rate limits)
+
+[cache]
+max_entries = 100000
+min_ttl     = 60
+max_ttl     = 86400
+warm        = ["cdn.jsdelivr.net"]
 
 [[forwarding]]
 suffix   = ["lan", "<dnsmasq domain>", "168.192.in-addr.arpa", "d.f.ip6.arpa"]
