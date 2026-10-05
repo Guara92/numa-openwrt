@@ -85,6 +85,15 @@ Binary reproducibility (mimalloc banner):
   from it. The `rust-cache` key gained an `-sde1` suffix to drop the stale
   object. Verified locally: gcc maps `SOURCE_DATE_EPOCH` to `__DATE__`/`__TIME__`.
 
+## Runtime allocator tuning (2026-10-05)
+
+Matrix executed on the device: `docs/BENCH-mimalloc.md`. Only
+`MIMALLOC_ARENA_RESERVE` matters: the default 1 GiB virtual arena drops to
+`89696 kB` VmSize at `64M` with cached qps and CPU/query unchanged (n=6 per
+side). `PURGE_DELAY`, `PURGE_DECOMMITS`, `MINIMAL_PURGE_SIZE`, `ALLOW_THP` and
+`USE_NUMA_NODES` have no net win. `init.d/numa` exports
+`MIMALLOC_ARENA_RESERVE=64M` to procd; override in `/etc/numa/numa.env`.
+
 ## Open / to verify on device
 
 - ⚠ opkg 21.02 sets `PKG_UPGRADE=1` in prerm on upgrade.

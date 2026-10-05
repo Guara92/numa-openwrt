@@ -37,9 +37,14 @@ start_service() {
     # shellcheck disable=SC1091  # optional; absent on a fresh install
     [ -f /etc/numa/numa.env ] && . /etc/numa/numa.env
 
+    # mimalloc reserves a 1 GiB virtual arena by default; 64 MiB is ample here
+    # and cuts VmSize ~12x with no qps/CPU change (docs/BENCH-mimalloc.md).
+    MIMALLOC_ARENA_RESERVE=${MIMALLOC_ARENA_RESERVE:-64M}
+
     procd_open_instance
     procd_set_param command "$PROG" run "$CONFIG_FILE"
-    procd_set_param env HOME=/root RUST_LOG="$RUST_LOG"
+    procd_set_param env HOME=/root RUST_LOG="$RUST_LOG" \
+        MIMALLOC_ARENA_RESERVE="$MIMALLOC_ARENA_RESERVE"
     procd_set_param respawn 3600 5 5
     procd_set_param stdout 1
     procd_set_param stderr 1
