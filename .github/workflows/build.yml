@@ -22,7 +22,7 @@ on:
 
 concurrency:
   group: build-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -95,7 +95,7 @@ jobs:
       - name: Deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools qemu-user dnsutils file llvm
+          sudo apt-get install -y musl-tools qemu-user dnsutils file llvm binutils
       - name: prepare-src
         run: sh scripts/prepare-src.sh ${{ matrix.alloc }}
       # After prepare-src: the Cargo workspace lives in src/, so this is the
@@ -167,11 +167,11 @@ jobs:
         env:
           VERSION: ${{ needs.config.outputs.ipk_version }}
           PUBLISH_VARIANT: ${{ needs.config.outputs.publish }}
+          USIGN_SECRET_KEY: ${{ secrets.USIGN_SECRET_KEY }}
         run: |
           set -eu
           PUBLISH_VARIANT="$PUBLISH_VARIANT" VERSION="$VERSION" sh scripts/mkipk.sh
           USIGN=/tmp/usign/build/usign \
-            USIGN_SECRET_KEY="${{ secrets.USIGN_SECRET_KEY }}" \
             VERSION="$VERSION" sh scripts/mkmanifest.sh
       - name: Refuse to overwrite an existing release tag
         env:

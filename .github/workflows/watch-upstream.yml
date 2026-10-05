@@ -58,13 +58,18 @@ jobs:
           old_commit=$(lock_get upstream commit)
           old_head=$(lock_get mimalloc head)
           old_source=$(lock_get mimalloc source)
+          old_rev=$(lock_get build rev)
 
           changed=0
+          tag_changed=0
+          head_changed=0
+          src_changed=0
           if [ "$tag" != "$old_tag" ] || [ "$sha" != "$old_commit" ]; then
-            set_lock tag "$tag"; set_lock commit "$sha"; set_lock rev 1
-            changed=1
+            tag_changed=1; changed=1
           fi
-          [ "$phead" != "$old_head" ] && { set_lock head "$phead"; changed=1; }
+          if [ "$phead" != "$old_head" ]; then
+            head_changed=1; changed=1
+          fi
 
           # If the PR merged and its merge commit is an ancestor of the tag,
           # drop the overlay.
@@ -72,10 +77,19 @@ jobs:
             status=$(gh api "repos/$repo/compare/${pmerge}...${sha}" --jq '.status')
             case "$status" in ahead|identical)
               if [ "$old_source" != upstream ]; then
-                set_lock source upstream
-                changed=1
+                src_changed=1; changed=1
               fi ;;
             esac
+          fi
+
+          if [ "$changed" = 1 ]; then
+            if [ "$tag_changed" = 1 ]; then
+              set_lock tag "$tag"; set_lock commit "$sha"; set_lock rev 1
+            else
+              set_lock rev "$((old_rev + 1))"
+            fi
+            [ "$head_changed" = 1 ] && set_lock head "$phead" || true
+            [ "$src_changed" = 1 ] && set_lock source upstream || true
           fi
 
           if [ "$changed" = 1 ]; then echo "changed=1" >> "$GITHUB_OUTPUT"; else echo "changed=0" >> "$GITHUB_OUTPUT"; fi

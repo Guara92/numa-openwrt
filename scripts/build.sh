@@ -41,6 +41,15 @@ if ! file "$out" | grep -q 'statically linked'; then
     exit 1
 fi
 
+if [ "$alloc" = mimalloc ]; then
+    strings "$out" | grep -qi mimalloc || { echo "numa-$VARIANT: mimalloc not linked" >&2; exit 1; }
+else
+    if strings "$out" | grep -qi mimalloc; then
+        echo "numa-$VARIANT: unexpected mimalloc allocator" >&2
+        exit 1
+    fi
+fi
+
 sha=$(sha256sum "$out" | cut -d' ' -f1)
 size=$(stat -c %s "$out")
 printf '%s  %s\n' "$sha" "numa-$VARIANT" > "$out.sha256"

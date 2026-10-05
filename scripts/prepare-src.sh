@@ -58,14 +58,17 @@ got=$(git -C "$src_dir" rev-parse HEAD)
 [ "$got" = "$commit" ] || { echo "tag $tag is $got, lock pins $commit" >&2; exit 1; }
 
 overlay=0
-if [ "$alloc" = mimalloc ]; then
-    [ "$mm_source" = pr ] || { echo "mimalloc.source=$mm_source but alloc=mimalloc" >&2; exit 1; }
+case "$mm_source" in
+    pr|upstream) ;;
+    *) echo "mimalloc.source=$mm_source (want pr|upstream)" >&2; exit 1 ;;
+esac
+if [ "$alloc" = mimalloc ] && [ "$mm_source" = pr ]; then
     git -C "$src_dir" fetch --quiet origin "pull/$pr/head"
     got=$(git -C "$src_dir" rev-parse FETCH_HEAD)
     [ "$got" = "$head" ] || { echo "PR $pr head is $got, lock pins $head" >&2; exit 1; }
 
     base=$(git -C "$src_dir" merge-base FETCH_HEAD origin/main)
-    for c in $(git -C "$src_dir" rev-list --reverse "$base..FETCH_HEAD"); do
+    for c in $(git -C "$src_dir" rev-list --reverse --no-merges "$base..FETCH_HEAD"); do
         # Reuse the original committer date so the overlay commit hashes (and
         # `git describe`) are identical across machines and builds.
         cdate=$(git -C "$src_dir" show -s --format=%cI "$c")
