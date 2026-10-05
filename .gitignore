@@ -1,5 +1,6 @@
 # usign secret key - never commit
 *.sec
+*.private-key.pem
 
 # Agent brief: contains live site data (IPs/hostnames), keep local only
 PLAN.md

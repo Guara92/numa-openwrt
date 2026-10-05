@@ -66,7 +66,7 @@ cp "$root/pkg/CONTROL/postinst" "$root/pkg/CONTROL/prerm" "$stage/CONTROL/"
 chmod 0755 "$stage/CONTROL/postinst" "$stage/CONTROL/prerm"
 
 mkdir -p "$root/dist"
-sh "$IPKG_BUILD" -o root -g root "$stage" "$root/dist" >/dev/null
+sh "$IPKG_BUILD" "$stage" "$root/dist" >/dev/null
 ipk="$root/dist/numa_${version}_aarch64_cortex-a53.ipk"
 [ -f "$ipk" ] || { echo "ipkg-build produced no ipk in $root/dist" >&2; exit 1; }
 sha256sum "$ipk" > "$ipk.sha256"
