@@ -98,9 +98,13 @@ dnsperf -s <ip> -p 53 -d cached.txt -c 1 -Q 500 -l 15
 - Throughput tracks CPU: the A73 build is ~1.4x the generic A72 build; the
   `target-cpu` tuning and mimalloc sit in that delta.
 - The low-load gap is **network, not numa**: TTL is 64 for both (same subnet,
-  zero L3 hops), so the ~0.2 ms difference is the router's slower idle
-  response, not an extra hop. Net of RTT the resolver adds ~0.01 ms (router)
-  vs ~0.04 ms (Pi4) - sub-tenth-of-ms on both.
+  zero L3 hops), so the ~0.2 ms difference is the router's software packet
+  path, not an extra hop. Net of RTT the resolver adds ~0.01 ms (router) vs
+  ~0.04 ms (Pi4) - sub-tenth-of-ms on both.
+- Router-side diagnostics (2026-10-05): no `cpufreq` (no DVFS); `tc` only the
+  default `fq_codel` (no SQM); nftables empty (the router uses iptables-legacy);
+  Ethernet IRQs pinned to CPU0 (`/proc/interrupts`, 0 on CPUs 1-3), so network
+  processing is single-core there. `ethtool -c` exposes no coalescing params.
 - For a home LAN (tens to hundreds of qps) both are far beyond the need. The
   router's measurable win is throughput headroom and removing the HA host from
   the DNS path, not low-load latency.
