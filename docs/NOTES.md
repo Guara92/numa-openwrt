@@ -18,8 +18,9 @@ device or in CI. Keep it factual: command, result.
 
 ## CI / release results (2026-10-05)
 
-`build.yml` on push to `main` (run `37279274901`), all green. Release
-`v0.24.1-r1` published (public, 15 assets).
+`build.yml` on push to `main` (run `37281061762`), all green. Release
+`v0.24.1-r2` published (public, 15 assets); `v0.24.1-r1` is superseded (it
+shipped `runner/runner`-owned files).
 
 | check | result |
 |---|---|
@@ -29,12 +30,15 @@ device or in CI. Keep it factual: command, result.
 | native dual-stack `smoke.sh` (UDP+TCP on 5 addrs, idle RSS) | pass |
 | `musl-gcc` native arm64 musl linking | pass (no `cross` fallback needed) |
 | `ipkg-build` (21.02) + `mkmanifest` + usign sign | pass |
+| ipk files owned `root:root` (fakeroot) | pass |
+| overlay `describe` identical across mimalloc legs (`v0.24.1-5-g373db8a`) | pass |
 | `usign -V` on this PC against the repo pubkey | pass (`OK`) |
 
-ipk (`numa_0.24.1-1_aarch64_cortex-a53.ipk`) verified: gzip tar with
+ipk (`numa_0.24.1-2_aarch64_cortex-a53.ipk`) verified: gzip tar with
 `debian-binary` / `data.tar.gz` / `control.tar.gz`; `Architecture:
-aarch64_cortex-a53`; ships `/etc/init.d/numa`, `/etc/numa/*`,
-`/usr/sbin/numa-ctl`; `conffiles` = `/etc/numa/canary-block.txt`; no auto-start.
+aarch64_cortex-a53`; `root:root` ownership; ships `/etc/init.d/numa`,
+`/etc/numa/*`, `/usr/sbin/numa-ctl`; `conffiles` =
+`/etc/numa/canary-block.txt`; no auto-start.
 
 CI gotchas found and fixed (keep in mind when changing these files):
 
@@ -48,13 +52,15 @@ CI gotchas found and fixed (keep in mind when changing these files):
 
 ## Known gaps
 
-- The ipk's files are owned `runner/runner` (uid 1001); `ipkg-build` only fixes
-  ownership for paths passed via `-m`, and that needs `fakeroot`. Cosmetic on the
-  router (modes are correct) but should be fixed before wider distribution.
-- The mimalloc overlay commit hashes differ per build leg (`describe`
-  `v0.24.1-5-g<sha>` varies), because cherry-pick stamps the committer date.
-  Binary output is unaffected; pin `GIT_COMMITTER_DATE` if byte-identical
-  variant names ever matter.
+- Overlay commit hashes are stable across legs now, but the hash depends on the
+  regenerated `Cargo.lock`: `cargo fetch` resolves against the live registry, so
+  environments with different cargo/index versions can yield a different overlay
+  tree. Within one CI run all legs agree (`v0.24.1-5-g373db8a`). Pin the lock
+  (use the PR's `Cargo.lock` instead of regenerating) if cross-environment
+  byte-identical builds are needed.
+- The ipk `mtime` comes from `ipkg-build`'s `TIMESTAMP=$(date)`. Set
+  `SOURCE_DATE_EPOCH` (ipkg-build honours it) for a reproducible ipk; note the
+  value is locale-formatted, so a non-C locale makes GNU tar reject it.
 
 ## Open / to verify on device
 
