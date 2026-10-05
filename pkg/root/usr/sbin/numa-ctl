@@ -30,7 +30,11 @@ is_ipv4() {
     return 0
 }
 
-numa_pid() { pgrep -x numa 2>/dev/null | head -n1; }
+numa_pid() {
+    _p=$(pidof numa 2>/dev/null || true)
+    [ -n "$_p" ] || _p=$(pgrep -x numa 2>/dev/null || true)
+    printf '%s' "$_p" | cut -d' ' -f1
+}
 
 LOCKFILE=/var/lock/numa-ctl.lock
 lock_nowait() {
@@ -318,7 +322,7 @@ save_dnsmasq() {
 cmd_enable() {
     [ -f "$CONFIG" ] || die "missing $CONFIG (run gen-config)"
 
-    _dport=$(uci -q get dhcp.@dnsmasq[0].port)
+    _dport=$(uci -q get dhcp.@dnsmasq[0].port || true)
     [ -z "$_dport" ] && _dport=53
     [ "$_dport" = 5354 ] && die "dnsmasq is already on :5354; numa looks enabled (run disable first)"
     [ -x /usr/sbin/numa ] || die "numa not installed at /usr/sbin/numa (run bootstrap)"
@@ -457,7 +461,7 @@ cmd_cutover() {
         done < "$_save.dns"
         rm -f "$_save" "$_save.dhcp_option" "$_save.dns"
     else
-        pgrep -x numa >/dev/null 2>&1 || die "numa not running; enable first"
+        [ -n "$(numa_pid)" ] || die "numa not running; enable first"
         : > "$_save.dhcp_option"; : > "$_save.dns"
         uci -q get "dhcp.$_pool.dhcp_option" 2>/dev/null | tr ' ' '\n' > "$_save.dhcp_option" || true
         uci -q get "dhcp.$_pool.dns" 2>/dev/null | tr ' ' '\n' > "$_save.dns" || true
@@ -507,11 +511,11 @@ cmd_watchdog() {
 
 cmd_status() {
     printf 'version:   installed=%s\n' "$(installed_version)"
-    _pid=$(pgrep -x numa 2>/dev/null || true)
+    _pid=$(numa_pid)
     printf 'pid:       %s\n' "${_pid:-none}"
     printf 'listeners:\n'
     netstat -ln 2>/dev/null | grep -E ':(53|5354|5380) ' || echo '  (netstat unavailable)'
-    _dport=$(uci -q get dhcp.@dnsmasq[0].port)
+    _dport=$(uci -q get dhcp.@dnsmasq[0].port || true)
     [ -z "$_dport" ] && _dport=53
     if [ "$_dport" != 5354 ] && [ -f "$STATE_DIR/dnsmasq.orig" ]; then
         log "WARN: dnsmasq port is $_dport while numa expects 5354 - DHCP at risk"
