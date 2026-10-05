@@ -52,15 +52,26 @@ CI gotchas found and fixed (keep in mind when changing these files):
 
 ## Known gaps
 
-- Overlay commit hashes are stable across legs now, but the hash depends on the
-  regenerated `Cargo.lock`: `cargo fetch` resolves against the live registry, so
-  environments with different cargo/index versions can yield a different overlay
-  tree. Within one CI run all legs agree (`v0.24.1-5-g373db8a`). Pin the lock
-  (use the PR's `Cargo.lock` instead of regenerating) if cross-environment
-  byte-identical builds are needed.
 - The ipk `mtime` comes from `ipkg-build`'s `TIMESTAMP=$(date)`. Set
-  `SOURCE_DATE_EPOCH` (ipkg-build honours it) for a reproducible ipk; note the
-  value is locale-formatted, so a non-C locale makes GNU tar reject it.
+  `SOURCE_DATE_EPOCH` (ipkg-build honours it) for a byte-reproducible ipk; note
+  the value is locale-formatted, so a non-C locale makes GNU tar reject it.
+
+Overlay hash reproducibility (resolved):
+
+- `git describe` reaches the binary (build version), so a different overlay
+  commit hash yields a different binary `sha256` and blocks byte comparison with
+  a release artifact.
+- Cause of the drift: developer-global git config and env leak into commit
+  creation. `commit.gpgsign` embeds a `gpgsig`; `core.hooksPath` can run
+  `prepare-commit-msg`; `commit.cleanup`/`core.commentChar` alter the message
+  rewritten by `cherry-pick --continue`; `GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL`
+  override the clone's `user.*`. `cargo fetch` also regenerated `Cargo.lock`
+  against the live registry.
+- Fix: `prepare-src.sh` isolates the throwaway clone (`GIT_CONFIG_GLOBAL=/dev/null`,
+  `GIT_CONFIG_NOSYSTEM=1`, unsets the committer env, local `commit.gpgsign=false`)
+  and applies a frozen `targets/overlay-Cargo.lock.diff` instead of `cargo fetch`.
+  The expected `git describe` is pinned as `[build].describe` in `upstream.lock`;
+  a mismatch warns. Verified: local and CI both give `v0.24.1-5-g373db8a`.
 
 ## Open / to verify on device
 

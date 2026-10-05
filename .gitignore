@@ -7,6 +7,7 @@ PLAN.md
 
 # Downloaded upstream release artifacts
 *.tar.gz
+*.tgz
 *.sha256
 
 # Local build / package output

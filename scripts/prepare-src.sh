@@ -38,10 +38,21 @@ rm -rf "$src_dir"
 # Full clone: a blob:none partial clone cannot lazy-fetch blobs from the PR's
 # ref (the promisor remote rejects "not our ref"), which breaks the cherry-pick.
 git clone --quiet "https://github.com/$repo.git" "$src_dir"
+
+# Throwaway clone: isolate it from the developer's git setup. Global/system
+# config (commit.gpgsign, core.hooksPath, commit.cleanup, url.insteadOf, ...)
+# and the committer env vars all alter the overlay commit hashes, and the hash
+# reaches the binary through `git describe`. Needs git >= 2.32.
+# Side effect: a proxy set in ~/.gitconfig (http.proxy) is no longer seen; if
+# you need one, export HTTPS_PROXY.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+unset GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+
 git -C "$src_dir" checkout --quiet --detach "$tag"
-# CI runners have no git identity; cherry-pick --continue needs one.
+# Identity is local to the clone, so it survives the global config above.
 git -C "$src_dir" config user.name "numa-openwrt build"
 git -C "$src_dir" config user.email "numa-openwrt@users.noreply.github.com"
+git -C "$src_dir" config commit.gpgsign false
 
 got=$(git -C "$src_dir" rev-parse HEAD)
 [ "$got" = "$commit" ] || { echo "tag $tag is $got, lock pins $commit" >&2; exit 1; }
@@ -86,6 +97,14 @@ if [ "$alloc" = mimalloc ]; then
 fi
 
 describe=$(git -C "$src_dir" describe --tags --long)
+
+# Drift detector: the expected describe is pinned in upstream.lock and changes
+# only when the tag, the PR head or the lock overlay moves. Warn, not fail, so
+# a legitimate pin bump is not blocked by an un-updated lock.
+want=$(lock_get build describe)
+if [ -n "$want" ] && [ "$describe" != "$want" ]; then
+    echo "WARN: describe=$describe, upstream.lock pins $want" >&2
+fi
 
 mkdir -p "$root/dist"
 {
