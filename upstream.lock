@@ -14,4 +14,4 @@ head   = "a892fbadaa65fdb85697be194afd4092b13c4017"
 
 [build]
 publish = "cortex-a73-mimalloc"            # variant packaged in the ipk; "generic-mimalloc" = fallback
-rev     = 2                                # ipk version <upstream>-<rev>; release tag v<upstream>-r<rev>
+rev     = 3                                # ipk version <upstream>-<rev>; release tag v<upstream>-r<rev>

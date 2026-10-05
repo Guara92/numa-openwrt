@@ -21,6 +21,7 @@ in [docs/RUNBOOK.md](docs/RUNBOOK.md); verification results in
 numa-openwrt/
 ├── upstream.lock                    pinned upstream tag, PR #395 head, rust
 ├── targets/flint4.features          cpuinfo features of the target
+├── targets/overlay-Cargo.lock.diff  frozen tag-lock + mimalloc lock overlay
 ├── scripts/
 │   ├── prepare-src.sh               clone tag, verify sha, apply overlay
 │   ├── build.sh                     VARIANT=<cpu>-<alloc> -> dist/numa-<variant>

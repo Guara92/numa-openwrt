@@ -69,7 +69,12 @@ if [ "$alloc" = mimalloc ]; then
             exit 1
         fi
         git -C "$src_dir" checkout HEAD -- Cargo.lock
-        ( cd "$src_dir" && cargo fetch >/dev/null 2>&1 )
+        # Apply the frozen lock overlay instead of `cargo fetch`: regenerating
+        # resolves against the live registry, so the lock (and every commit hash
+        # built on it) would differ between machines. The patch is the minimal
+        # tag-lock + mimalloc addition; regenerate it when the tag moves.
+        git -C "$src_dir" apply "$root/targets/overlay-Cargo.lock.diff" \
+            || { echo "pinned Cargo.lock overlay did not apply; regenerate targets/overlay-Cargo.lock.diff" >&2; exit 1; }
         git -C "$src_dir" add Cargo.lock
         if ! GIT_COMMITTER_DATE="$cdate" git -C "$src_dir" -c core.editor=true cherry-pick --continue; then
             echo "cherry-pick --continue failed for $c" >&2
