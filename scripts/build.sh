@@ -24,6 +24,12 @@ if [ "$cpu" = cortex-a73 ]; then
     cflags="-O3 -mcpu=cortex-a73"
 fi
 
+# mimalloc (C) bakes __DATE__/__TIME__ into its version banner, which made the
+# published binary change on every rebuild. Pin it to the source revision; the
+# cc crate inherits the env and gcc derives both macros from it.
+SOURCE_DATE_EPOCH="$(git -C "$src" log -1 --format=%ct)"
+export SOURCE_DATE_EPOCH
+
 export CC_aarch64_unknown_linux_musl=musl-gcc
 export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="$rustflags"
 export CFLAGS_aarch64_unknown_linux_musl="$cflags"

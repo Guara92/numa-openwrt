@@ -102,7 +102,8 @@ jobs:
       # first point a lockfile exists to key the cache on.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          key: ${{ matrix.cpu }}-${{ matrix.alloc }}
+          # -sde1 drops pre-SOURCE_DATE_EPOCH caches (stale mimalloc banner)
+          key: ${{ matrix.cpu }}-${{ matrix.alloc }}-sde1
           workspaces: src
       - name: check-features (cortex-a73)
         if: matrix.cpu == 'cortex-a73'

@@ -73,6 +73,17 @@ Overlay hash reproducibility (resolved):
   The expected `git describe` is pinned as `[build].describe` in `upstream.lock`;
   a mismatch warns. Verified: local and CI both give `v0.24.1-5-g373db8a`.
 
+Binary reproducibility (mimalloc banner):
+
+- mimalloc (C) compiles `__DATE__`/`__TIME__` into its version banner, so the
+  mimalloc binaries were reproducible only by an accident of the CI cache: r3
+  and r4 shipped the same `generic-mimalloc` (a stale cached C object) but a
+  different `cortex-a73-mimalloc`, which recompiled on each build.
+- Fix: `build.sh` exports `SOURCE_DATE_EPOCH` from the source HEAD commit date
+  before `cargo build`; the `cc` crate inherits it and gcc derives both macros
+  from it. The `rust-cache` key gained an `-sde1` suffix to drop the stale
+  object. Verified locally: gcc maps `SOURCE_DATE_EPOCH` to `__DATE__`/`__TIME__`.
+
 ## Open / to verify on device
 
 - ⚠ opkg 21.02 sets `PKG_UPGRADE=1` in prerm on upgrade.
