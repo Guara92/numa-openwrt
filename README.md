@@ -12,7 +12,8 @@ router and no opkg feed is used.
 
 The verified facts and phases are recorded in [docs/NOTES.md](docs/NOTES.md);
 operations are in [docs/RUNBOOK.md](docs/RUNBOOK.md); bench data for upstream
-PR #395 in [docs/BENCH.md](docs/BENCH.md).
+PR #395 in [docs/BENCH.md](docs/BENCH.md); runtime allocator tuning in
+[docs/BENCH-mimalloc.md](docs/BENCH-mimalloc.md).
 
 ## Layout
 
@@ -39,7 +40,7 @@ numa-openwrt/
 │       └── usr/sbin/numa-ctl
 ├── tests/smoke.toml
 ├── bootstrap.sh                     first install on the router
-├── docs/{RUNBOOK.md,BENCH.md,NOTES.md}
+├── docs/{RUNBOOK.md,BENCH.md,BENCH-mimalloc.md,NOTES.md}
 └── .github/workflows/{watch-upstream.yml,build.yml}
 ```
 
@@ -78,6 +79,28 @@ numa-ctl stage --ipk "$(ls -1t /etc/numa/pkgcache/*.ipk | head -1)"
 numa-ctl enable                         # hand :53 to numa, health-check, watchdog
 numa-ctl cutover lan                    # point one pool's DNS at the router
 ```
+
+### Dashboard / API
+
+numa serves its dashboard and API from `numa.toml` on `api_bind_addr` (the
+pool's v4, set by `gen-config`, e.g. `192.168.1.1`) and `api_port` (default
+`5380`). This is separate from the DNS listener on `:53`. It is plain HTTP, so
+the token is a gate, not transport encryption.
+
+```text
+http://<api_bind_addr>:<api_port>       # e.g. http://192.168.1.1:5380
+```
+
+Loopback is unauthenticated and `/health` is always open. Every other client,
+including the LAN address, must present the API token:
+
+- browser: the HTTP Basic prompt - any username, the token as the password
+- API clients: `Authorization: Bearer <token>`, or Basic
+
+The 64-hex token is minted on first start, stored owner-only at
+`<data_dir>/api_token` (here `/etc/numa/state/api_token`), and printed on the
+router with `numa token`. Pin it with `[server] api_token` in `numa.toml` or
+`NUMA_API_TOKEN` (env wins).
 
 Hard rules and the firmware-upgrade procedure are in the runbook. Anything
 touching DHCP or the GL web UI can take DNS and DHCP down; read it first.
