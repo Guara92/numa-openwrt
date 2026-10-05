@@ -9,9 +9,9 @@ filled in below.
 |---|---|
 | upstream official aarch64 | baseline (= Pi4 build) |
 | generic-musl | |
-| generic-mimalloc | best cached throughput |
+| generic-mimalloc | published (best throughput + CPU/query) |
 | cortex-a73-musl | |
-| cortex-a73-mimalloc | published |
+| cortex-a73-mimalloc | -6 to -8% vs generic-mimalloc |
 
 Allocator and CPU effects are separable by comparing across the grid.
 
@@ -34,8 +34,8 @@ order A B B A x3. Stop the staged process with
 matches the ssh shell itself and kills nothing.
 
 Metrics: qps; `VmRSS`/`VmSize` from `/proc/<pid>/status`; resolver CPU per
-query from `/proc/<pid>/stat` (`(utime+stime)/CLK_TCK/queries`, not measured
-here).
+query from the sum over `/proc/<pid>/task/*/stat`
+(`sum(utime+stime)/CLK_TCK/queries`).
 
 Microbench: `cargo bench --no-run --bench throughput` with the variant's flags,
 copy the binary to the router, run the `pipeline_parallel` group with 1/2/4
@@ -73,7 +73,24 @@ Effects (same run):
   RSS; the live numa reports VmSize 1048 MB, VmRSS 24.5 MB, VmHWM 37 MB.
   Address space, not RAM. Requirement: `overcommit_memory != 2` and no
   `ulimit -v` (router: overcommit=0, `ulimit -v` unlimited).
-- not measured: CPU/query (efficiency), the cold/unique path, DNSSEC on.
+- not measured: the cold/unique path, DNSSEC on.
+
+### Confirmation: generic-mimalloc vs cortex-a73-mimalloc (`-T 4 -c 32`)
+
+Re-run with higher client parallelism to rule out a client-side ceiling, ABBA
+x3, CPU/query summed over the staged pid's `/proc/<pid>/task/*/stat`
+(`CLK_TCK=100`).
+
+| variant | mean qps | CPU ms/query | dropped/run |
+|---|---|---|---|
+| generic-mimalloc | 38 958 | 0.0697 | 54 |
+| cortex-a73-mimalloc | 35 760 | 0.0758 | 71 |
+
+- More client parallelism did not raise qps: the earlier ~41k was the
+  resolver/host limit, not the client, so the grid stands.
+- a73 is -8.2% qps here (reproduces the -6.1% grid figure) and +8% CPU/query:
+  no efficiency upside. The only unmeasured a73 upside is its ISA on
+  TLS/DNSSEC paths (off).
 
 ### Microbench (`pipeline_parallel`)
 
@@ -83,13 +100,13 @@ Effects (same run):
 
 ## Decision
 
-`build.publish = cortex-a73-mimalloc` (kept, 2026-10-05).
+`build.publish = generic-mimalloc` (switched 2026-10-05).
 
-mimalloc is the real win and ships either way. The generic build is ~4-6%
-faster on cached throughput, judged marginal; a73 is kept for its ISA
-(aes/sha2/crc, relevant to TLS/DNSSEC paths if enabled later) and was not
-shown worse in any non-throughput dimension. Revisit with a CPU/query
-(efficiency) and a cold/unique pass before switching to `generic-mimalloc`.
+mimalloc is the win and ships either way. On top, generic beats a73 on cached
+throughput (a73 -6 to -8%) and on CPU/query (a73 +8% CPU per query), so there
+is no efficiency upside. The only a73 upside is its ISA (aes/sha2/crc) on
+TLS/DNSSEC paths, which are off. Revisit only if DNSSEC/TLS-heavy server paths
+are enabled and re-measured.
 
 ## A/B: router vs HA add-on (Pi4), 2026-10-05
 
@@ -98,7 +115,7 @@ Load client wired (`enp11s0`, `192.168.1.106/24`), same /24 as both targets.
 
 | target | build | host |
 |---|---|---|
-| A `192.168.1.1` | `cortex-a73-mimalloc` (this repo) | GL-BE14000, MT7988A, 4x Cortex-A73 |
+| A `192.168.1.1` | `cortex-a73-mimalloc` (published then) | GL-BE14000, MT7988A, 4x Cortex-A73 |
 | B `192.168.1.247` | upstream `numa-linux-aarch64` (generic) | Raspberry Pi 4 (BCM2711, 4x Cortex-A72), HA add-on, `host_network` |
 
 ### Throughput (cached, 8 clients, 15s, order A B B A x3)
