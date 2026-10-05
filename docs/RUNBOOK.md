@@ -39,18 +39,39 @@ numa-ctl cutover lan
   that must keep bypassing to its own DNS.
 - GL dynamic DNS rules written into dnsmasq are bypassed once numa is primary.
   Re-express them as `[[forwarding]]` in `numa.toml`.
-- A rotating ISP prefix needs `numa-ctl gen-config --apply` again, or v6 clients
-  are dropped: `allow_from` is a snapshot of the current prefixes.
-- `allow_from` must include the ULA prefixes; without them ULA-only clients are
-  denied (silent UDP drop).
+- `allow_from` is left empty on purpose (numa default: allow all peers). Client
+  source prefixes churn (SLAAC ULA from a LAN router advertisement, rotating ISP
+  GUA) and cannot be enumerated, so a prefix allowlist silently drops LAN
+  clients. Reachability is contained by the firewall instead: the `wan` zone
+  must keep `input='DROP'` and **nothing may forward or expose `:53`**
+  (`[dot]`/`[proxy]` stay disabled). Do not reintroduce a prefix list.
 
 ## Firmware upgrade
 
+`keep.d` preserves `/etc/numa/` only. A settings-keeping flash removes
+`/usr/sbin/numa`, `/usr/sbin/numa-ctl` and `/etc/init.d/numa`; `numa.toml`, the
+keys and `pkgcache/` survive, so no `gen-config` is needed after the reinstall.
+
 1. `numa-ctl disable` **before** flashing (restores dnsmasq on `:53`).
 2. Flash.
-3. `/etc/numa` is kept via `keep.d`, so the cached ipk and key survive.
-   Reinstall: `opkg install /etc/numa/pkgcache/<ipk>`.
+3. Restore the package from the kept cache:
+
+   ```sh
+   ls -l /etc/numa/pkgcache/
+   opkg install /etc/numa/pkgcache/numa_*.ipk
+   ```
+
+   If `pkgcache/` is empty (the bootstrap that installed it predates the cache
+   copy, or the flash dropped the overlay), download `numa_*.ipk` on a PC,
+   `scp -O` it to `/tmp`, then `opkg install /tmp/numa_*.ipk`.
 4. `numa-ctl enable`.
+
+Do **not** reach for `bootstrap.sh` as the first fallback: with dnsmasq left on
+`:5354` the router has no resolver on `:53`, and the fetch dies with the
+misleading `Failed to send request: Operation not permitted`
+(`strerror(UCLIENT_ERROR_CONNECT)`, i.e. *cannot connect* — DNS or route, not a
+permission error). Restore `:53` first:
+`uci -q delete dhcp.@dnsmasq[0].port && uci commit dhcp && /etc/init.d/dnsmasq restart`.
 
 ## Upgrade and rollback (no firmware change)
 
@@ -78,6 +99,5 @@ Until answered, defaults hold:
 1. the current LAN DHCP option-6 host keeps serving; decide whether numa
    replaces it after cutover.
 2. the iot pool and any protected pool keep bypassing to their own DNS.
-3. Tailnet clients: pass `--tailnet` to `gen-config` only after testing MagicDNS.
-4. Upstream provider: Quad9 DoH.
-5. Watchdog is fail-open.
+3. Upstream provider: Quad9 DoH.
+4. Watchdog is fail-open.

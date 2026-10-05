@@ -9,8 +9,9 @@ bind_addr     = "[::]:53"
 api_port      = 5380
 api_bind_addr = "<lan v4>"
 data_dir      = "/etc/numa/state"
-allow_from    = ["<v4 nets of lan/iot/guest>", "<ULA prefixes>", "fe80::/10", "<lan GUA prefix>"]
-               # --tailnet adds "100.64.0.0/10", "fd7a:115c:a1e0::/48"
+allow_from    = []                # allow all peers (numa default). LAN client source
+                                  # prefixes churn (SLAAC ULA, rotating GUA) and cannot
+                                  # be enumerated; the firewall keeps :53 off the WAN.
 filter_aaaa   = false             # true suppresses AAAA/HTTPS on IPv4-only nets
 max_concurrent_resolutions = 512  # cache-miss resolutions in flight; 0 is rejected upstream
 rebind_protect        = false     # opt-in; keep off for split-horizon (local -> dnsmasq)

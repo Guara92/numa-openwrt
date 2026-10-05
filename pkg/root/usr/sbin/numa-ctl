@@ -549,10 +549,9 @@ lan_ifaces() {
 }
 
 cmd_gen_config() {
-    _tailnet=0; _apply=0
+    _apply=0
     while [ $# -gt 0 ]; do
         case "$1" in
-            --tailnet) _tailnet=1 ;;
             --apply) _apply=1 ;;
             *) die "gen-config: unknown arg $1" ;;
         esac
@@ -562,7 +561,7 @@ cmd_gen_config() {
     need jsonfilter "opkg install jsonfilter"
 
     _wan=$(wan_networks)
-    _allows=; _suffix=; _api=
+    _suffix=; _api=
     for _s in $(uci show dhcp 2>/dev/null | sed -n "s/^dhcp\.\([^.]*\)=dhcp$/\1/p"); do
         case "$_s" in @*|*..*) continue ;; esac
         [ "$(uci -q get "dhcp.$_s.ignore")" = 1 ] && continue
@@ -570,35 +569,13 @@ cmd_gen_config() {
         [ -n "$_if" ] || continue
         case " $_wan " in *" $_if "*) continue ;; esac
 
+        # api_bind_addr: first non-WAN pool's v4 address.
         _j=$(ubus call "network.interface.$_if" status 2>/dev/null || echo '{}')
         _a=$(jsonfilter -s "$_j" -e '@["ipv4-address"][0].address' 2>/dev/null || true)
-        _m=$(jsonfilter -s "$_j" -e '@["ipv4-address"][0].mask' 2>/dev/null || true)
-        if [ -n "$_a" ] && [ -n "$_m" ]; then
-            _cidr=$(/bin/ipcalc.sh "$_a" "$_m" | sed -n 's/^NETWORK=\(.*\)/\1/p')
-            _pfx=$(/bin/ipcalc.sh "$_a" "$_m" | sed -n 's/^PREFIX=\(.*\)/\1/p')
-            [ -n "$_cidr" ] && [ -n "$_pfx" ] && _allows="$_allows \"$_cidr/$_pfx\","
-            [ -z "$_api" ] && _api="$_a"
-        fi
-        _i=0
-        while [ "$_i" -lt 32 ]; do
-            _u=$(jsonfilter -s "$_j" -e '@["ipv6-address"]['"$_i"'].address' 2>/dev/null || true)
-            [ -n "$_u" ] || break
-            _um=$(jsonfilter -s "$_j" -e '@["ipv6-address"]['"$_i"'].mask' 2>/dev/null || true)
-            [ -n "$_um" ] && _allows="$_allows \"$_u/$_um\","
-            _i=$((_i + 1))
-        done
-        _i=0
-        while [ "$_i" -lt 32 ]; do
-            _g=$(jsonfilter -s "$_j" -e '@["ipv6-prefix-assignment"]['"$_i"'].address' 2>/dev/null || true)
-            [ -n "$_g" ] || break
-            _gm=$(jsonfilter -s "$_j" -e '@["ipv6-prefix-assignment"]['"$_i"'].mask' 2>/dev/null || true)
-            [ -n "$_gm" ] && _allows="$_allows \"$_g/$_gm\","
-            _i=$((_i + 1))
-        done
+        [ -z "$_api" ] && [ -n "$_a" ] && _api="$_a"
     done
 
     [ -n "$_api" ] || _api=127.0.0.1
-    _allows="$_allows \"fe80::/10\","
     for _suf in $(uci -q get dhcp.@dnsmasq[0].local 2>/dev/null || true); do
         _suf=$(echo "$_suf" | tr -d /)
         [ -n "$_suf" ] && _suffix="$_suffix \"$_suf\","
@@ -607,10 +584,6 @@ cmd_gen_config() {
     [ -n "$_dom" ] && _suffix="$_suffix \"$_dom\","
     _suffix="$_suffix \"168.192.in-addr.arpa\", \"d.f.ip6.arpa\""
 
-    if [ "$_tailnet" = 1 ]; then
-        _allows="$_allows \"100.64.0.0/10\" \"fd7a:115c:a1e0::/48\","
-    fi
-
     _out=/etc/numa/numa.toml.new
     cat > "$_out" <<EOF
 [server]
@@ -618,7 +591,10 @@ bind_addr     = "[::]:53"
 api_port      = 5380
 api_bind_addr = "$_api"
 data_dir      = "/etc/numa/state"
-allow_from    = [$_allows]
+# allow_from = [] (numa default: all peers). Client source prefixes churn
+# (SLAAC ULA from LAN RAs, rotating ISP GUA) and cannot be enumerated; the
+# firewall keeps :53 off the WAN.
+allow_from    = []
 filter_aaaa   = false
 max_concurrent_resolutions = 512
 rebind_protect        = false
@@ -688,7 +664,7 @@ usage: numa-ctl COMMAND [args]
   cutover [--revert] POOL       point one DHCP pool's DNS at the router
   watchdog                      cron self-check; fails open after 3 misses
   status                        show listeners, versions, drift
-  gen-config [--tailnet] [--apply]   generate numa.toml
+  gen-config [--apply]          generate numa.toml
 EOF
 }
 

@@ -104,7 +104,35 @@ the plaintext `fallback`. Shipped config is now DoH-only:
 `fallback = ["https://cloudflare-dns.com/dns-query"]`. Hostname resolution for
 numa-originated HTTPS uses `bootstrap_resolver`'s default IP-literal list
 (`9.9.9.9`, `1.1.1.1`, UDP), because a fallback without IP literals is skipped
-there by design.
+  there by design.
+
+## Dashboard "resolver elsewhere" advisory (2026-10-05)
+
+The dashboard shows `This host's DNS points at 127.0.0.1, not this Numa
+instance`. False positive. `GET /health` returns
+`system_resolver.matches_listener=false` because
+`src/system_dns.rs::matches_numa_listener()` only treats a wildcard listener as
+claiming loopback when the address family matches the nameserver
+(`l.is_ipv4() == ns.is_ipv4()`), and gen-config binds a single dual-stack
+`[::]:53` (`numa-ctl` `bind_addr`). With Linux `bindv6only=0` that socket answers
+IPv4 too (`dig @127.0.0.1` works; numa logs `[::ffff:127.0.0.1]`), but the check
+does not treat the IPv6 wildcard as claiming the IPv4 loopback. Not fixable from
+`bind_addr`: `["0.0.0.0:53","[::]:53"]` collides (`UdpListener` never sets
+`IPV6_V6ONLY`) and `0.0.0.0:53` alone drops IPv6. Cosmetic; fix belongs upstream.
+Side finding: `/health.lan_ip` reports the WAN address (`detect_lan_ip()`
+mis-detects on OpenWrt).
+
+## allow_from = [] and the LAN ULA (2026-10-05)
+
+LAN clients were silently dropped over IPv6. `allow_from` listed the router's
+*configured* ULA, but the LAN's live ULA is a different prefix advertised by the
+Thread Border Routers on the LAN (the HA OpenThread Border Router and a Samsung
+SmartThings device), each sending a prefix-only RA with a route-info option for
+its Thread mesh prefix. This is normal Thread/Matter behaviour and must not be
+disabled. `gen-config` derived `allow_from` from `ubus network.interface.*
+status`, which cannot expose that SLAAC ULA, so it never matched. Fix shipped:
+`allow_from = []` (numa default = all peers, same as numa-haos) with the WAN kept
+closed by the firewall; the prefix enumeration is removed from `gen-config`.
 
 ## Open / to verify on device
 
@@ -119,6 +147,10 @@ there by design.
 - ⚠ RDNSS advertises the router after `cutover` deletes the `dns` list.
 - ⚠ `localuse` exists in `/etc/init.d/dnsmasq`.
 - ⚠ `uclient-fetch` follows the `releases/latest/download` redirect.
+- `uclient-fetch` prints a connect/DNS failure as `Failed to send request:
+  Operation not permitted`: it passes `UCLIENT_ERROR_CONNECT` (= 1) to
+  `strerror`, and `strerror(1)` is "Operation not permitted". It means *cannot
+  connect* (DNS or route), never a permission problem.
 - ⚠ the current LAN DHCP option-6 host - see RUNBOOK open decisions.
 - ⚠ GL UI DNS settings page can rewrite the dnsmasq port back to 53 - see RUNBOOK.
 
