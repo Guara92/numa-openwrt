@@ -34,7 +34,9 @@ semver=${tag#v}
 version=${VERSION:-$semver-$rev}
 
 bin="$root/dist/numa-$variant"
-[ -x "$bin" ] || { echo "missing $bin (build variant $variant first)" >&2; exit 1; }
+# Artifacts lose the exec bit through upload/download; only existence matters.
+[ -f "$bin" ] || { echo "missing $bin (build variant $variant first)" >&2; exit 1; }
+chmod 0755 "$bin"
 
 if [ -z "${IPKG_BUILD:-}" ]; then
     clone=$(mktemp -d)
