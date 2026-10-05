@@ -16,8 +16,8 @@ Nothing starts numa at install time.
 ## First install
 
 ```sh
-# on a PC: copy the trusted pubkey to the router out-of-band
-scp pkg/root/etc/numa/keys/numa-openwrt.pub root@router:/tmp/
+# on a PC: copy the trusted pubkey and bootstrap.sh to the router out-of-band
+scp bootstrap.sh pkg/root/etc/numa/keys/numa-openwrt.pub root@router:/tmp/
 
 ssh root@router 'NUMA_OPENWRT_REPO=<owner>/numa-openwrt sh /tmp/bootstrap.sh /tmp/numa-openwrt.pub'
 numa-ctl gen-config --apply
@@ -72,7 +72,7 @@ three cron ticks; then `kill -CONT`.
 
 ## Open decisions
 
-Recorded in PLAN.md §10. Until answered, defaults hold:
+Until answered, defaults hold:
 1. the current LAN DHCP option-6 host keeps serving; decide whether numa
    replaces it after cutover.
 2. the iot pool and any protected pool keep bypassing to their own DNS.

@@ -1,7 +1,7 @@
 # numa-openwrt notes
 
-Verification log. `⚠` items from PLAN.md get a line here once checked on the
-device or in CI. Keep it factual: command, result.
+Verification log. `⚠` items from the design notes get a line here once checked
+on the device or in CI. Keep it factual: command, result.
 
 ## Pins (re-verified 2026-10-04)
 
@@ -77,7 +77,12 @@ Overlay hash reproducibility (resolved):
 
 - ⚠ opkg 21.02 sets `PKG_UPGRADE=1` in prerm on upgrade.
 - ⚠ BusyBox `nslookup -port=` support (else `bind-dig` is required).
-- ⚠ `blocked.numa-ctl.internal` sinkhole form (0.0.0.0 vs NXDOMAIN) - pin after the first device smoke.
+- `blocked.numa-ctl.internal` sinkhole pinned to `A -> 0.0.0.0` NOERROR (upstream
+  issue #400); the health suite and `smoke.sh` require exactly `0.0.0.0`.
+- Device checks from the review fixes: BusyBox `sleep` (the loops use integer
+  `sleep 1`), `flock` availability (command locking is best-effort), `uci del_list`
+  support in `cutover`/`disable`, and the router ULA read from ubus
+  `ipv6-prefix-assignment[*].local-address`.
 - ⚠ RDNSS advertises the router after `cutover` deletes the `dns` list.
 - ⚠ `localuse` exists in `/etc/init.d/dnsmasq`.
 - ⚠ `uclient-fetch` follows the `releases/latest/download` redirect.

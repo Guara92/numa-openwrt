@@ -10,10 +10,9 @@ names on `:5354`. Cutover is per DHCP pool, so clients are unaffected until
 they renew. Deployment is manual via `numa-ctl` - nothing auto-deploys to the
 router and no opkg feed is used.
 
-The design, verified facts and phases are in [PLAN.md](PLAN.md). Operations are
-in [docs/RUNBOOK.md](docs/RUNBOOK.md); verification results in
-[docs/NOTES.md](docs/NOTES.md); bench data for upstream PR #395 in
-[docs/BENCH.md](docs/BENCH.md).
+The verified facts and phases are recorded in [docs/NOTES.md](docs/NOTES.md);
+operations are in [docs/RUNBOOK.md](docs/RUNBOOK.md); bench data for upstream
+PR #395 in [docs/BENCH.md](docs/BENCH.md).
 
 ## Layout
 
@@ -69,7 +68,10 @@ All commands run on the router as `root`. The public key must be trusted
 out-of-band (see `bootstrap.sh`).
 
 ```sh
-sh bootstrap.sh /tmp/numa-openwrt.pub   # verify + opkg install, starts nothing
+# on a PC: copy the trusted pubkey and bootstrap.sh to the router
+scp bootstrap.sh pkg/root/etc/numa/keys/numa-openwrt.pub root@router:/tmp/
+
+ssh root@router 'NUMA_OPENWRT_REPO=<owner>/numa-openwrt sh /tmp/bootstrap.sh /tmp/numa-openwrt.pub'
 numa-ctl gen-config --apply
 numa-ctl stage --ipk "$(ls -1t /etc/numa/pkgcache/*.ipk | head -1)"
 numa-ctl enable                         # hand :53 to numa, health-check, watchdog
