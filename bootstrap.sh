@@ -45,6 +45,10 @@ got=$(sha256sum "$work/$ipk" | cut -d' ' -f1)
 [ "$got" = "$sha" ] || die "ipk sha256 mismatch"
 
 opkg install "$work/$ipk" || die "opkg install failed"
+pkgcache=/etc/numa/pkgcache
+mkdir -p "$pkgcache"
+cp "$work/$ipk" "$pkgcache/$ipk"
+sha256sum "$pkgcache/$ipk" | cut -d' ' -f1 > "$pkgcache/$ipk.sha256"
 opkg install bind-dig || log "WARN: bind-dig install failed; probe needs it"
 
 log "installed numa $ver (no service started)"

@@ -17,6 +17,33 @@ log()  { logger -t numa-ctl "$*" 2>/dev/null || true; echo "numa-ctl: $*"; }
 die()  { log "ERROR: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing '$1': $2"; }
 
+is_ipv4() {
+    case "$1" in ""|*[!0-9.]*) return 1 ;; esac
+    _oIFS=$IFS; IFS=.
+    # shellcheck disable=SC2086
+    set -- $1
+    IFS=$_oIFS
+    [ $# -eq 4 ] || return 1
+    for _o in "$@"; do
+        { [ -n "$_o" ] && [ "$_o" -le 255 ]; } 2>/dev/null || return 1
+    done
+    return 0
+}
+
+numa_pid() { pgrep -x numa 2>/dev/null | head -n1; }
+
+LOCKFILE=/var/lock/numa-ctl.lock
+lock_nowait() {
+    command -v flock >/dev/null 2>&1 || return 0
+    exec 9>"$LOCKFILE" 2>/dev/null || return 0
+    flock -n 9
+}
+lock_wait() {
+    command -v flock >/dev/null 2>&1 || return 0
+    exec 9>"$LOCKFILE" 2>/dev/null || return 0
+    flock 9
+}
+
 # --- small helpers ---------------------------------------------------------
 
 cfg_get() {
@@ -60,12 +87,12 @@ reexec() {
 
 # --- release fetch / verify ------------------------------------------------
 
-verify_manifest() { # verify_manifest WORKDIR -> prints version
-    _w=$1
+verify_manifest() { # verify_manifest <base-url> <workdir> -> prints version
+    _base=$1; _w=$2
     need usign "opkg install usign"
     [ -f "$PUBKEY" ] || die "missing public key $PUBKEY"
-    fetch "$BASE/manifest.json" "$_w/manifest.json"
-    fetch "$BASE/manifest.json.sig" "$_w/manifest.json.sig"
+    fetch "$_base/manifest.json" "$_w/manifest.json"
+    fetch "$_base/manifest.json.sig" "$_w/manifest.json.sig"
     usign -V -m "$_w/manifest.json" -s "$_w/manifest.json.sig" -p "$PUBKEY" \
         >/dev/null 2>&1 || die "manifest signature verification failed"
     need jsonfilter "opkg install jsonfilter"
@@ -79,7 +106,7 @@ installed_version() {
 
 cmd_check() {
     _w=$(mktemp -d)
-    _ver=$(verify_manifest "$_w")
+    _ver=$(verify_manifest "$BASE" "$_w")
     log "available=$_ver installed=$(installed_version)"
     rm -rf "$_w"
 }
@@ -87,14 +114,22 @@ cmd_check() {
 cmd_fetch() { # fetch [ver]
     mkdir -p "$PKGCACHE"
     _w=$(mktemp -d)
-    _ver=$(verify_manifest "$_w")
-    [ $# -ge 1 ] && _ver=$1
+    _want=${1:-}
+    if [ -n "$_want" ]; then
+        case "$_want" in *-*) ;; *) die "invalid version '$_want' (expected <semver>-<rev>)";; esac
+        _base="https://github.com/$REPO/releases/download/v${_want%-*}-r${_want##*-}"
+    else
+        _base=$BASE
+    fi
+    _ver=$(verify_manifest "$_base" "$_w")
+    if [ -n "$_want" ] && [ "$_ver" != "$_want" ]; then
+        die "release for $_want reports version $_ver"
+    fi
     _ipk="numa_${_ver}_aarch64_cortex-a53.ipk"
     _sha=$(jsonfilter -i "$_w/manifest.json" -e '$.ipk.sha256')
-    fetch "$BASE/$_ipk" "$PKGCACHE/$_ipk"
+    fetch "$_base/$_ipk" "$PKGCACHE/$_ipk"
     _got=$(sha256sum "$PKGCACHE/$_ipk" | cut -d' ' -f1)
     [ "$_got" = "$_sha" ] || die "ipk sha256 mismatch: got $_got want $_sha"
-    # keep the last two ipks
     list_ipks | sed -n '3,$p' | while read -r f; do rm -f "$f" "$f.sha256"; done
     log "fetched $PKGCACHE/$_ipk"
     rm -rf "$_w"
@@ -103,11 +138,14 @@ cmd_fetch() { # fetch [ver]
 # --- health suite ----------------------------------------------------------
 
 # H1..H5 must pass. ADDR v4 is the LAN address (API host).
-health() { # health <v4> <ula> <port> <api_port>
-    _v4=$1; _ula=$2; _port=$3; _api=$4
+health() { # health <pid> <v4> <ula> <port> <api_port>
+    _pid=$1; _v4=$2; _ula=$3; _port=$4; _api=$5
     _fail=0
 
-    pgrep -x numa >/dev/null 2>&1 || { log "H1 fail: numa not running"; return 1; }
+    if [ -z "$_pid" ] || ! kill -0 "$_pid" 2>/dev/null; then
+        log "H1 fail: numa (pid ${_pid:-none}) not running"
+        return 1
+    fi
 
     _code=$(uclient-fetch -q -O - "http://$_v4:$_api/health" 2>/dev/null \
         | sed -n 's/.*"status"[^,}]*"\([a-z]*\)".*/\1/p')
@@ -127,15 +165,15 @@ health() { # health <v4> <ula> <port> <api_port>
     _ok=0; _i=0
     while [ "$_i" -lt 30 ]; do
         _r=$(probe 127.0.0.1 "$_port" "$BLOCKED" A)
-        case "$_r" in ""|"0.0.0.0"|*"0.0.0.0"*) _ok=1; break ;; esac
+        [ "$_r" = "0.0.0.0" ] && { _ok=1; break; }
         _i=$((_i + 1)); sleep 2
     done
-    [ "$_ok" = 1 ] || { log "H4 fail: $BLOCKED not sinkholed"; _fail=1; }
+    [ "$_ok" = 1 ] || { log "H4 fail: $BLOCKED not sinkholed to 0.0.0.0"; _fail=1; }
 
     _ok=0; _i=0
     while [ "$_i" -lt 10 ]; do
         _r=$(probe 127.0.0.1 "$_port" example.com A)
-        [ -n "$_r" ] && { _ok=1; break; }
+        is_ipv4 "$_r" && { _ok=1; break; }
         _i=$((_i + 1)); sleep 1
     done
     [ "$_ok" = 1 ] || { log "H5 fail: example.com did not resolve"; _fail=1; }
@@ -146,17 +184,26 @@ health() { # health <v4> <ula> <port> <api_port>
 }
 
 ula_addr() {
-    uci -q get "network.$(uci -q get dhcp.@dnsmasq[0].interface).ip6addr" 2>/dev/null || true
+    for _if in $(lan_ifaces); do
+        _j=$(ubus call "network.interface.$_if" status 2>/dev/null || echo '{}')
+        for _la in $(jsonfilter -s "$_j" -e '@["ipv6-prefix-assignment"][*]["local-address"]' 2>/dev/null || true); do
+            case "$_la" in fc*|fd*) echo "$_la"; return 0 ;; esac
+        done
+        for _la in $(jsonfilter -s "$_j" -e '@["ipv6-address"][*].address' 2>/dev/null || true); do
+            case "$_la" in fc*|fd*) echo "$_la"; return 0 ;; esac
+        done
+    done
 }
 
 # --- stage -----------------------------------------------------------------
 
 cmd_stage() {
-    _ipk='' _variant='' _keep=0
+    _ipk='' _variant='' _keep=0 _binary=''
     while [ $# -gt 0 ]; do
         case "$1" in
             --ipk) _ipk=$2; shift ;;
             --variant) _variant=$2; shift ;;
+            --binary) _binary=$2; shift ;;
             --keep) _keep=1 ;;
             *) die "stage: unknown arg $1" ;;
         esac
@@ -168,10 +215,13 @@ cmd_stage() {
     rm -rf "$_stage"; mkdir -p "$_stage/state"
     cp -a "$STATE_DIR/." "$_stage/state/" 2>/dev/null || true
 
-    if [ -n "$_variant" ]; then
+    if [ -n "$_binary" ]; then
+        [ -x "$_binary" ] || die "binary $_binary not executable"
+        cp "$_binary" "$_stage/numa"
+    elif [ -n "$_variant" ]; then
         _w=$(mktemp -d)
-        _sha=$(jsonfilter -s "$(verify_manifest_json "$_w")" \
-            -e "@.binaries[?(@.variant=='$_variant')].sha256" 2>/dev/null || true)
+        _mf=$(verify_manifest_json "$BASE" "$_w")
+        _sha=$(jsonfilter -i "$_mf" -e "@.binaries[@.variant='$_variant'].sha256" 2>/dev/null || true)
         fetch "$BASE/numa-$_variant" "$_stage/numa"
         [ -n "$_sha" ] && [ "$(sha256sum "$_stage/numa" | cut -d' ' -f1)" = "$_sha" ] \
             || die "variant $_variant sha256 mismatch"
@@ -180,7 +230,7 @@ cmd_stage() {
         tar -xzOf "$_ipk" ./data.tar.gz | tar -xzO ./usr/sbin/numa > "$_stage/numa" \
             || die "could not extract binary from $_ipk (member names?)"
     else
-        die "stage needs --ipk or --variant"
+        die "stage needs --ipk, --variant or --binary"
     fi
     chmod 0755 "$_stage/numa"
 
@@ -192,7 +242,7 @@ cmd_stage() {
     HOME=/root "$_stage/numa" run "$_stage/numa.toml" >"$_stage/log" 2>&1 &
     _pid=$!
     sleep 3
-    if ! health "$(lan_v4)" "$(ula_addr)" 5399 5381; then
+    if ! health "$_pid" "$(lan_v4)" "$(ula_addr)" 5399 5381; then
         kill "$_pid" 2>/dev/null || true
         log "stage failed; see $_stage/log"
         return 1
@@ -205,9 +255,9 @@ cmd_stage() {
     fi
 }
 
-verify_manifest_json() { # verify_manifest_json <workdir> -> echoes manifest path
-    _w=$1
-    verify_manifest "$_w" >/dev/null
+verify_manifest_json() { # verify_manifest_json <base-url> <workdir> -> path
+    _base=$1; _w=$2
+    verify_manifest "$_base" "$_w" >/dev/null
     echo "$_w/manifest.json"
 }
 
@@ -221,6 +271,7 @@ list_ipks() { # newest first
 
 cmd_upgrade() {
     reexec upgrade "$@"
+    lock_wait
     _ver=${1:-}
     cmd_fetch ${_ver:+"$_ver"}
     _ipk=$(list_ipks | head -n1)
@@ -230,7 +281,7 @@ cmd_upgrade() {
     cmd_stage --ipk "$_ipk" || die "staged binary failed health; aborting upgrade"
     opkg install "$_ipk" || die "opkg install failed"
     /etc/init.d/numa restart
-    if health "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)"; then
+    if health "$(numa_pid)" "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)"; then
         log "upgrade OK"
         return 0
     fi
@@ -238,17 +289,18 @@ cmd_upgrade() {
     [ -n "$_prev" ] || die "no previous ipk to roll back to"
     opkg install --force-downgrade "$_prev" || die "rollback install failed"
     /etc/init.d/numa restart
-    health "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)" || die "rollback still unhealthy"
+    health "$(numa_pid)" "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)" || die "rollback still unhealthy"
     exit 1
 }
 
 cmd_rollback() {
     reexec rollback "$@"
+    lock_wait
     _prev=$(list_ipks | sed -n '2p')
     [ -n "$_prev" ] || die "no previous ipk"
     opkg install --force-downgrade "$_prev" || die "rollback install failed"
     /etc/init.d/numa restart
-    health "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)" || exit 1
+    health "$(numa_pid)" "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)" || exit 1
     log "rollback OK"
 }
 
@@ -265,30 +317,71 @@ save_dnsmasq() {
 
 cmd_enable() {
     [ -f "$CONFIG" ] || die "missing $CONFIG (run gen-config)"
-    cmd_stage --ipk "$(list_ipks | head -n1)" \
-        || die "stage failed; not enabling"
+
+    _dport=$(uci -q get dhcp.@dnsmasq[0].port)
+    [ -z "$_dport" ] && _dport=53
+    [ "$_dport" = 5354 ] && die "dnsmasq is already on :5354; numa looks enabled (run disable first)"
+    [ -x /usr/sbin/numa ] || die "numa not installed at /usr/sbin/numa (run bootstrap)"
+
+    lock_wait
+
+    cmd_stage --binary /usr/sbin/numa || die "stage failed; not enabling"
+
+    _rollback=1
+    # Any failure past this point must put dnsmasq back on :53.
+    trap '[ "$_rollback" = 1 ] && { cmd_disable || true; }' EXIT
 
     save_dnsmasq
     uci set dhcp.@dnsmasq[0].port=5354
     uci set dhcp.@dnsmasq[0].noresolv=1
     grep -q localuse /etc/init.d/dnsmasq && uci set dhcp.@dnsmasq[0].localuse=1 || true
+
+    # Pools without an option-6 entry would get a lease with no DNS now that
+    # dnsmasq is off :53; 0.0.0.0 tells the client to use the server's address.
+    _added=''
+    for _s in $(uci show dhcp 2>/dev/null | sed -n "s/^dhcp\.\([^.]*\)=dhcp$/\1/p"); do
+        case "$_s" in @*|*..*) continue ;; esac
+        [ "$(uci -q get "dhcp.$_s.ignore")" = 1 ] && continue
+        [ -n "$(uci -q get "dhcp.$_s.interface")" ] || continue
+        _has6=0
+        for _o in $(uci -q get "dhcp.$_s.dhcp_option" 2>/dev/null || true); do
+            case "$_o" in 6,*|option:dns-server,*) _has6=1 ;; esac
+        done
+        [ "$_has6" = 0 ] || continue
+        uci add_list "dhcp.$_s.dhcp_option=6,0.0.0.0"
+        _added="$_added $_s"
+    done
+    if [ -n "$_added" ]; then
+        echo "${_added# }" | tr ' ' '\n' > "$STATE_DIR/dhcp-dns-added"
+    fi
+
     uci commit dhcp
     /etc/init.d/dnsmasq restart
 
     _i=0
     while [ "$_i" -lt 20 ]; do
         netstat -ln 2>/dev/null | grep -q ':5354' && break
-        _i=$((_i + 1)); sleep 0.5
+        _i=$((_i + 1)); sleep 1
     done
     if netstat -ln 2>/dev/null | grep -q ':53 '; then
         log "something still on :53; disabling"
+        _rollback=0
         cmd_disable
         die "port 53 still held"
     fi
 
     /etc/init.d/numa enable
     /etc/init.d/numa start
-    if ! health "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)"; then
+
+    # procd starts asynchronously: wait for the canary before the full suite.
+    _i=0
+    while [ "$_i" -lt 30 ]; do
+        [ "$(probe 127.0.0.1 53 "$CANARY" A)" = "$CANARY_A" ] && break
+        _i=$((_i + 1)); sleep 1
+    done
+
+    if ! health "$(numa_pid)" "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)"; then
+        _rollback=0
         cmd_disable
         die "enable health failed"
     fi
@@ -299,6 +392,9 @@ cmd_enable() {
     grep -qF "$_cron" /etc/crontabs/root 2>/dev/null || echo "$_cron" >> /etc/crontabs/root
     /etc/init.d/cron restart 2>/dev/null || true
     rm -f "$STATE_DIR/FAILED_OPEN"
+
+    _rollback=0
+    trap - EXIT
     log "numa enabled"
 }
 
@@ -314,15 +410,26 @@ cmd_disable() {
         if [ -n "$_noresolv" ]; then uci set "dhcp.@dnsmasq[0].noresolv=$_noresolv"; else uci -q delete dhcp.@dnsmasq[0].noresolv; fi
         if [ -n "$_localuse" ]; then uci set "dhcp.@dnsmasq[0].localuse=$_localuse"; else uci -q delete dhcp.@dnsmasq[0].localuse; fi
     fi
+
+    if [ -f "$STATE_DIR/dhcp-dns-added" ]; then
+        while IFS= read -r _s; do
+            [ -n "$_s" ] || continue
+            uci -q del_list "dhcp.$_s.dhcp_option=6,0.0.0.0" 2>/dev/null || true
+        done < "$STATE_DIR/dhcp-dns-added"
+        rm -f "$STATE_DIR/dhcp-dns-added"
+    fi
+
     uci commit dhcp
     /etc/init.d/dnsmasq restart
 
     _i=0
     while [ "$_i" -lt 20 ]; do
         netstat -ln 2>/dev/null | grep -q ':53 ' && break
-        _i=$((_i + 1)); sleep 0.5
+        _i=$((_i + 1)); sleep 1
     done
-    probe 127.0.0.1 53 example.com A >/dev/null 2>&1 || log "WARN: dnsmasq not resolving on :53"
+    _r=$(probe 127.0.0.1 53 example.com A)
+    is_ipv4 "$_r" || log "WARN: dnsmasq not resolving on :53"
+    rm -f "$STATE_DIR/dnsmasq.orig"
     log "numa disabled; dnsmasq back on :53 (cutover state left as is)"
 }
 
@@ -352,12 +459,20 @@ cmd_cutover() {
     else
         pgrep -x numa >/dev/null 2>&1 || die "numa not running; enable first"
         : > "$_save.dhcp_option"; : > "$_save.dns"
-        uci -q get "dhcp.$_pool.dhcp_option" 2>/dev/null > "$_save.dhcp_option" || true
-        uci -q get "dhcp.$_pool.dns" 2>/dev/null > "$_save.dns" || true
-        uci -q delete "dhcp.$_pool.dhcp_option" || true
-        uci -q delete "dhcp.$_pool.dns" || true
+        uci -q get "dhcp.$_pool.dhcp_option" 2>/dev/null | tr ' ' '\n' > "$_save.dhcp_option" || true
+        uci -q get "dhcp.$_pool.dns" 2>/dev/null | tr ' ' '\n' > "$_save.dns" || true
         _router=$(uci -q get "network.$_pool.ipaddr" 2>/dev/null || lan_v4)
+        # Keep every non-DNS-server option; replace only the option-6 entries.
+        _keep=''
+        for _o in $(uci -q get "dhcp.$_pool.dhcp_option" 2>/dev/null || true); do
+            case "$_o" in 6,*|option:dns-server,*) ;; *) _keep="$_keep $_o" ;; esac
+        done
+        uci -q delete "dhcp.$_pool.dhcp_option" || true
+        for _o in $_keep; do
+            uci add_list "dhcp.$_pool.dhcp_option=$_o"
+        done
         uci add_list "dhcp.$_pool.dhcp_option=6,$_router"
+        uci -q delete "dhcp.$_pool.dns" || true
     fi
     uci commit dhcp
     /etc/init.d/dnsmasq restart
@@ -368,6 +483,7 @@ cmd_cutover() {
 # --- watchdog --------------------------------------------------------------
 
 cmd_watchdog() {
+    lock_nowait || exit 0
     /etc/init.d/numa enabled >/dev/null 2>&1 || exit 0
     [ -f "$STATE_DIR/FAILED_OPEN" ] && exit 0
 
@@ -416,6 +532,18 @@ wan_networks() {
     done | tr ' ' '\n'
 }
 
+lan_ifaces() {
+    _wan=$(wan_networks)
+    for _s in $(uci show dhcp 2>/dev/null | sed -n "s/^dhcp\.\([^.]*\)=dhcp$/\1/p"); do
+        case "$_s" in @*|*..*) continue ;; esac
+        [ "$(uci -q get "dhcp.$_s.ignore")" = 1 ] && continue
+        _if=$(uci -q get "dhcp.$_s.interface" || true)
+        [ -n "$_if" ] || continue
+        case " $_wan " in *" $_if "*) continue ;; esac
+        echo "$_if"
+    done
+}
+
 cmd_gen_config() {
     _tailnet=0; _apply=0
     while [ $# -gt 0 ]; do
@@ -447,19 +575,29 @@ cmd_gen_config() {
             [ -n "$_cidr" ] && [ -n "$_pfx" ] && _allows="$_allows \"$_cidr/$_pfx\""
             [ -z "$_api" ] && _api="$_a"
         fi
-        _u=$(jsonfilter -s "$_j" -e '@["ipv6-address"][0].address' 2>/dev/null || true)
-        _um=$(jsonfilter -s "$_j" -e '@["ipv6-address"][0].mask' 2>/dev/null || true)
-        [ -n "$_u" ] && [ -n "$_um" ] && _allows="$_allows \"$_u/$_um\""
-        _g=$(jsonfilter -s "$_j" -e '@["ipv6-prefix-assignment"][0].address' 2>/dev/null || true)
-        _gm=$(jsonfilter -s "$_j" -e '@["ipv6-prefix-assignment"][0].mask' 2>/dev/null || true)
-        [ -n "$_g" ] && [ -n "$_gm" ] && _allows="$_allows \"$_g/$_gm\""
+        _i=0
+        while [ "$_i" -lt 32 ]; do
+            _u=$(jsonfilter -s "$_j" -e '@["ipv6-address"]['"$_i"'].address' 2>/dev/null || true)
+            [ -n "$_u" ] || break
+            _um=$(jsonfilter -s "$_j" -e '@["ipv6-address"]['"$_i"'].mask' 2>/dev/null || true)
+            [ -n "$_um" ] && _allows="$_allows \"$_u/$_um\""
+            _i=$((_i + 1))
+        done
+        _i=0
+        while [ "$_i" -lt 32 ]; do
+            _g=$(jsonfilter -s "$_j" -e '@["ipv6-prefix-assignment"]['"$_i"'].address' 2>/dev/null || true)
+            [ -n "$_g" ] || break
+            _gm=$(jsonfilter -s "$_j" -e '@["ipv6-prefix-assignment"]['"$_i"'].mask' 2>/dev/null || true)
+            [ -n "$_gm" ] && _allows="$_allows \"$_g/$_gm\""
+            _i=$((_i + 1))
+        done
     done
 
     [ -n "$_api" ] || _api=127.0.0.1
     _allows="$_allows \"fe80::/10\""
     for _suf in $(uci -q get dhcp.@dnsmasq[0].local 2>/dev/null || true); do
-        [ "$_suf" = lan ] && continue
-        _suffix="$_suffix \"$_suf\","
+        _suf=$(echo "$_suf" | tr -d /)
+        [ -n "$_suf" ] && _suffix="$_suffix \"$_suf\","
     done
     _dom=$(uci -q get dhcp.@dnsmasq[0].domain 2>/dev/null || true)
     [ -n "$_dom" ] && _suffix="$_suffix \"$_dom\","
@@ -524,7 +662,7 @@ usage() {
 usage: numa-ctl COMMAND [args]
   check                         verify manifest signature, show versions
   fetch [ver]                   download+verify the ipk
-  stage (--ipk F|--variant V) [--keep]   run a candidate on :5399 and health-check
+  stage (--ipk F|--variant V|--binary F) [--keep]   run a candidate on :5399 and health-check
   upgrade [ver]                 fetch + stage + opkg install + health (rollback on fail)
   rollback                      install the previous cached ipk
   enable                        hand :53 to numa, health-check, install watchdog

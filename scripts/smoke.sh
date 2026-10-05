@@ -69,19 +69,18 @@ for addr in 127.0.0.1 ::1 10.99.0.1 10.99.1.1 fd99::1; do
     done
 done
 
-# Blocklist load is async: retry up to 60 s. Sinkhole form (0.0.0.0 or NODATA/
-# NXDOMAIN) is pinned in docs/NOTES.md.
+# Blocklist load is async: retry up to 60 s. The sinkhole form is pinned to
+# A -> 0.0.0.0 (NOERROR) in docs/NOTES.md; an empty reply (NXDOMAIN forwarded
+# upstream before the list loads) must not pass.
 blocked=0
 i=0
 while [ "$i" -lt 30 ]; do
     ans=$(dig_short "@127.0.0.1" blocked.numa-ctl.internal A)
-    case "$ans" in
-        ""|"0.0.0.0"|*"0.0.0.0"*) blocked=1; break ;;
-    esac
+    [ "$ans" = "0.0.0.0" ] && { blocked=1; break; }
     i=$((i + 1))
     sleep 2
 done
-[ "$blocked" = 1 ] || { echo "FAIL: blocked.numa-ctl.internal not sinkholed" >&2; fail=1; }
+[ "$blocked" = 1 ] || { echo "FAIL: blocked.numa-ctl.internal not sinkholed to 0.0.0.0" >&2; fail=1; }
 
 tag=$(sed -n 's/^TAG=v//p' "$root/dist/build-info.env" 2>/dev/null || true)
 ver=$("$bin" --version 2>&1 || true)
