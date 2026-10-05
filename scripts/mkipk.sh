@@ -66,6 +66,16 @@ cp "$root/pkg/CONTROL/postinst" "$root/pkg/CONTROL/prerm" "$stage/CONTROL/"
 chmod 0755 "$stage/CONTROL/postinst" "$stage/CONTROL/prerm"
 
 mkdir -p "$root/dist"
+
+# Reproducible ipk: ipkg-build stamps every tar member from SOURCE_DATE_EPOCH and
+# reads the value back with `date --date=@...`, so pin the epoch, the C locale and
+# UTC (a locale-formatted string makes GNU tar reject the value). The epoch is the
+# release commit's date.
+if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+    SOURCE_DATE_EPOCH=$(git -C "$root" log -1 --format=%ct 2>/dev/null || echo 0)
+fi
+export SOURCE_DATE_EPOCH LC_ALL=C TZ=UTC
+
 # ipkg-build archives the staging files' ownership as-is. Under fakeroot we can
 # chown the stage to root so the ipk ships root:root instead of the build user.
 if command -v fakeroot >/dev/null 2>&1; then

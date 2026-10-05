@@ -52,9 +52,10 @@ CI gotchas found and fixed (keep in mind when changing these files):
 
 ## Known gaps
 
-- The ipk `mtime` comes from `ipkg-build`'s `TIMESTAMP=$(date)`. Set
-  `SOURCE_DATE_EPOCH` (ipkg-build honours it) for a byte-reproducible ipk; note
-  the value is locale-formatted, so a non-C locale makes GNU tar reject it.
+- ipk `mtime` reproducibility (resolved): `mkipk.sh` exports `SOURCE_DATE_EPOCH`
+  (the release commit date), `LC_ALL=C` and `TZ=UTC`, so the pinned `ipkg-build`
+  stamps every tar member from a stable value. It reads the epoch back with
+  `date --date=@...`, hence the C locale is required or GNU tar rejects the string.
 
 Overlay hash reproducibility (resolved):
 
