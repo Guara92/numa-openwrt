@@ -627,8 +627,8 @@ rebind_private_ranges = []
 
 [upstream]
 mode       = "forward"
-address    = ["https://9.9.9.9/dns-query", "https://149.112.112.112/dns-query"]
-fallback   = ["9.9.9.9", "149.112.112.112"]
+address    = ["https://dns.quad9.net/dns-query"]
+fallback   = ["https://cloudflare-dns.com/dns-query"]
 timeout_ms = 800
 hedge_ms   = 50
 

@@ -10,8 +10,8 @@ allow_from    = ["127.0.0.0/8", "::1/128", "10.99.0.0/24", "10.99.1.0/24", "fd99
 
 [upstream]
 mode     = "forward"
-address  = ["https://9.9.9.9/dns-query"]
-fallback = ["9.9.9.9"]
+address  = ["https://dns.quad9.net/dns-query"]
+fallback = ["https://cloudflare-dns.com/dns-query"]
 
 [blocking]
 enabled = true

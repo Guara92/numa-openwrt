@@ -94,6 +94,18 @@ side). `PURGE_DELAY`, `PURGE_DECOMMITS`, `MINIMAL_PURGE_SIZE`, `ALLOW_THP` and
 `USE_NUMA_NODES` have no net win. `init.d/numa` exports
 `MIMALLOC_ARENA_RESERVE=64M` to procd; override in `/etc/numa/numa.env`.
 
+## Upstream transport (2026-10-05)
+
+`/stats` showed ~64% of upstream queries leaving on plaintext UDP. Cause: the
+DoH primary used IP-literal endpoints (`https://9.9.9.9/dns-query`) that failed
+with `error sending request` and Quad9 `HTTP 403 Forbidden`, so queries fell to
+the plaintext `fallback`. Shipped config is now DoH-only:
+`address = ["https://dns.quad9.net/dns-query"]`,
+`fallback = ["https://cloudflare-dns.com/dns-query"]`. Hostname resolution for
+numa-originated HTTPS uses `bootstrap_resolver`'s default IP-literal list
+(`9.9.9.9`, `1.1.1.1`, UDP), because a fallback without IP literals is skipped
+there by design.
+
 ## Open / to verify on device
 
 - ⚠ opkg 21.02 sets `PKG_UPGRADE=1` in prerm on upgrade.

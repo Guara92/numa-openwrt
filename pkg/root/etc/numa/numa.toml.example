@@ -19,8 +19,8 @@ rebind_private_ranges = []        # empty -> upstream built-in private/special r
 
 [upstream]
 mode       = "forward"
-address    = ["https://9.9.9.9/dns-query", "https://149.112.112.112/dns-query"]
-fallback   = ["9.9.9.9", "149.112.112.112"]
+address    = ["https://dns.quad9.net/dns-query"]
+fallback   = ["https://cloudflare-dns.com/dns-query"]   # DoH only: no plaintext leak on failover
 timeout_ms = 800                  # upstream default is 5000
 hedge_ms   = 50                   # parallel query after 50ms of silence; 0 disables
 
