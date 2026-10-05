@@ -110,13 +110,13 @@ are enabled and re-measured.
 
 ## A/B: router vs HA add-on (Pi4), 2026-10-05
 
-Load client wired (`enp11s0`, `192.168.1.106/24`), same /24 as both targets.
+Load client wired (`enp11s0`, `<client v4>/24`), same /24 as both targets.
 `dnsperf` 2.x, `cached.txt` = 52 popular names, warmed once per target first.
 
 | target | build | host |
 |---|---|---|
-| A `192.168.1.1` | `cortex-a73-mimalloc` (published then) | GL-BE14000, MT7988A, 4x Cortex-A73 |
-| B `192.168.1.247` | upstream `numa-linux-aarch64` (generic) | Raspberry Pi 4 (BCM2711, 4x Cortex-A72), HA add-on, `host_network` |
+| A `<router v4>` | `cortex-a73-mimalloc` (published then) | GL-BE14000, MT7988A, 4x Cortex-A73 |
+| B `<ha-host v4>` | upstream `numa-linux-aarch64` (generic) | Raspberry Pi 4 (BCM2711, 4x Cortex-A72), HA add-on, `host_network` |
 
 ### Throughput (cached, 8 clients, 15s, order A B B A x3)
 

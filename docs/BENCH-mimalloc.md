@@ -3,8 +3,8 @@
 Test plan and results for the runtime options of the mimalloc build shipped in
 the ipk. All knobs are environment variables: no rebuild, no rev bump.
 
-Executed 2026-10-05 on the live router (`192.168.1.1`, off-peak), load from the
-wired client `192.168.1.106`. Staged binary: `generic-mimalloc` extracted from
+Executed 2026-10-05 on the live router (`<router v4>`, off-peak), load from the
+wired client `<client v4>`. Staged binary: `generic-mimalloc` extracted from
 the cached `numa_0.24.1-9_aarch64_cortex-a53.ipk`.
 
 ## Scope and invariants
@@ -84,7 +84,7 @@ Per run:
    `/proc/<pid>/task/*/stat` (`utime+stime`), `CLK_TCK=100`.
 
 Screen = ABBA (`default, cell, cell, default`) x1 per level. Confirm = ABBA x3
-on the winner. All runs from `192.168.1.106`, `dnsperf 2.16.0`, wired.
+on the winner. All runs from `<client v4>`, `dnsperf 2.16.0`, wired.
 
 Inputs (generated, not shipped; regenerate identically for comparability):
 
