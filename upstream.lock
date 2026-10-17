@@ -10,9 +10,9 @@ commit = "c7385c78512b81ee096d41e4b27dab8ebe5b8e7e"
 [mimalloc]
 source = "pr"                              # "pr" | "upstream" (after upstream release)
 pr     = 395
-head   = "a892fbadaa65fdb85697be194afd4092b13c4017"
+head = "26cb76d17612fad736504f8fe1e0175adbf304d4"
 
 [build]
 publish = "generic-mimalloc"               # variant packaged in the ipk; "cortex-a73-mimalloc" is also built
-rev     = 12                               # ipk version <upstream>-<rev>; release tag v<upstream>-r<rev>
+rev = "13"
 describe = "v0.24.1-5-g373db8a"            # expected `git describe` after the overlay; mismatch warns
