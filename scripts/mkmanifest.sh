@@ -31,8 +31,6 @@ rev=$(lock_get build rev)
 tag=$(lock_get upstream tag)
 up_commit=$(lock_get upstream commit)
 mm_source=$(lock_get mimalloc source)
-mm_pr=$(lock_get mimalloc pr)
-mm_head=$(lock_get mimalloc head)
 publish=$(lock_get build publish)
 version=${VERSION:-${tag#v}-$rev}
 rustc_ver=$(rustc --version 2>/dev/null | awk '{print $2}')
@@ -60,7 +58,7 @@ mkdir -p "$dist"
 cat > "$dist/manifest.json" <<EOF
 {"version":"$version",
  "upstream":{"tag":"$tag","commit":"$up_commit"},
- "mimalloc":{"source":"$mm_source","pr":$mm_pr,"head":"$mm_head"},
+ "mimalloc":{"source":"$mm_source"},
  "rustc":"$rustc_ver","published_variant":"$publish",
  "ipk":{"name":"numa_${version}_aarch64_cortex-a53.ipk","sha256":"$ipk_sha"},
  "binaries":[$binaries]}

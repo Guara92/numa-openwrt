@@ -3,6 +3,11 @@
 Data for upstream PR #395. The variant grid and the router vs HA/Pi4 A/B are
 filled in below.
 
+**Variant names.** The numbers below come from the v0.24.1 grid, which had a
+`musl`/`mimalloc` axis. The current build has one variant per CPU (`generic`,
+`cortex-a73`), both with mimalloc. The allocator and CPU comparisons still hold;
+re-measure before quoting an absolute qps for a current build.
+
 ## Variants
 
 | variant | note |
@@ -18,7 +23,8 @@ Allocator and CPU effects are separable by comparing across the grid.
 ## Method
 
 Target: `numa-ctl stage --variant V --keep` -> `[::]:5399` on the router (LAN
-zone input is allowed). Run off-peak; the router is live.
+zone input is allowed), where `V` is `generic` or `cortex-a73`. Run off-peak;
+the router is live.
 
 Load from a wired LAN PC with `dnsperf` 2.x (note: `-q` is max outstanding,
 `-Q` is max qps):

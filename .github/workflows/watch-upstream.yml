@@ -40,7 +40,6 @@ jobs:
           set_lock() { sed -i "s|^$1 .*|$1 = \"$2\"|" upstream.lock; }
 
           repo=$(lock_get upstream repo)
-          pr=$(lock_get mimalloc pr)
 
           tag=$(gh api "repos/$repo/releases/latest" --jq '.tag_name')
           obj=$(gh api "repos/$repo/git/ref/tags/$tag" --jq '.object.type + " " + .object.sha')
@@ -49,50 +48,25 @@ jobs:
             sha=$(gh api "repos/$repo/git/tags/$sha" --jq '.object.sha')
           fi
 
-          pj=$(gh api "repos/$repo/pulls/$pr")
-          pmerged=$(printf '%s' "$pj" | jq -r '.merged')
-          phead=$(printf '%s' "$pj" | jq -r '.head.sha')
-          pmerge=$(printf '%s' "$pj" | jq -r '.merge_commit_sha // empty')
-
           old_tag=$(lock_get upstream tag)
           old_commit=$(lock_get upstream commit)
-          old_head=$(lock_get mimalloc head)
-          old_source=$(lock_get mimalloc source)
           old_rev=$(lock_get build rev)
 
-          changed=0
-          tag_changed=0
-          head_changed=0
-          src_changed=0
+          # The release tag is v<semver>-r<rev>, so a new upstream tag starts at
+          # r1, but a moved commit on the SAME tag must bump: reusing the rev
+          # would point at a release tag that already exists and build.yml
+          # refuses to overwrite it.
           if [ "$tag" != "$old_tag" ] || [ "$sha" != "$old_commit" ]; then
-            tag_changed=1; changed=1
-          fi
-          if [ "$phead" != "$old_head" ]; then
-            head_changed=1; changed=1
-          fi
-
-          # If the PR merged and its merge commit is an ancestor of the tag,
-          # drop the overlay.
-          if [ "$pmerged" = true ] && [ -n "$pmerge" ]; then
-            status=$(gh api "repos/$repo/compare/${pmerge}...${sha}" --jq '.status')
-            case "$status" in ahead|identical)
-              if [ "$old_source" != upstream ]; then
-                src_changed=1; changed=1
-              fi ;;
-            esac
-          fi
-
-          if [ "$changed" = 1 ]; then
-            if [ "$tag_changed" = 1 ]; then
-              set_lock tag "$tag"; set_lock commit "$sha"; set_lock rev 1
-            else
+            set_lock tag "$tag"; set_lock commit "$sha"
+            if [ "$tag" = "$old_tag" ]; then
               set_lock rev "$((old_rev + 1))"
+            else
+              set_lock rev 1
             fi
-            [ "$head_changed" = 1 ] && set_lock head "$phead" || true
-            [ "$src_changed" = 1 ] && set_lock source upstream || true
+            echo "changed=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=0" >> "$GITHUB_OUTPUT"
           fi
-
-          if [ "$changed" = 1 ]; then echo "changed=1" >> "$GITHUB_OUTPUT"; else echo "changed=0" >> "$GITHUB_OUTPUT"; fi
 
       - name: Open PR
         if: steps.update.outputs.changed == '1'

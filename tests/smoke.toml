@@ -15,7 +15,10 @@ fallback = ["https://cloudflare-dns.com/dns-query"]
 
 [blocking]
 enabled = true
-lists   = ["file://@CANARY@"]
+lists   = ["file://@CANARY@", "file://@BLOCKED2@"]
+# A list source, not a bare domain: paths and URLs here are fetched and
+# refreshed like `lists`, and an allowlisted domain must win over a block entry.
+allowlist = ["file://@ALLOWED@"]
 
 [[zones]]
 domain      = "canary.numa-ctl.internal"

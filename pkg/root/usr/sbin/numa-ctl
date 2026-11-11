@@ -612,6 +612,10 @@ hedge_ms   = 50
 refresh_hours = 6
 lists = ["https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/pro-onlydomains.txt",
          "file:///etc/numa/canary-block.txt"]
+# allowlist takes plain domains and also URLs/paths, which are fetched and
+# refreshed with the lists. A local file is the safe default: a remote list can
+# change under us. Add e.g. a Hagezi whitelist URL when that is acceptable.
+allowlist = ["file:///etc/numa/allow.txt"]
 
 [cache]
 max_entries = 100000
