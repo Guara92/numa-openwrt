@@ -88,6 +88,42 @@ side). `PURGE_DELAY`, `PURGE_DECOMMITS`, `MINIMAL_PURGE_SIZE`, `ALLOW_THP` and
 `USE_NUMA_NODES` have no net win. `init.d/numa` exports
 `MIMALLOC_ARENA_RESERVE=64M` to procd; override in `/etc/numa/numa.env`.
 
+## Upgrade transport and procd startup (2026-11-11)
+
+Found on the Flint 4 running numa 0.24.1-7. Two independent defects made
+`numa-ctl upgrade` unusable; the second is fixed here.
+
+- **`pidof`/`pgrep` (already fixed in `main`, `236831e`).** The 0.24.1-7 package
+  used `pgrep -x numa`, which on this BusyBox returns exit 1 with no output for
+  a running process (`pidof numa` -> 6048). `cmd_upgrade` then called
+  `health "" ...`, H1 failed on the empty pid, and the upgrade rolled itself
+  back. Any image older than that commit shows the same thing as `pid: none` in
+  `numa-ctl status`.
+- **`uclient-fetch` cannot download from github.com here.** Measured on the
+  router: every GitHub host fails through `uclient-fetch`
+  (`github.com`, `raw.githubusercontent.com`, `codeload.github.com`,
+  `gist.github.com`) while `api.github.com`, `cdn.jsdelivr.net`,
+  `example.com` and `one.one.one.one` succeed, so it is not a general network
+  or TLS failure. Not DNS: the A record is returned and observed in a
+  `tcpdump -i any port 53` capture. Not TCP: `uclient-fetch https://<ip>/`
+  reaches TLS and fails only on `Server hostname does not match SSL
+  certificate`. With an SNI hostname no SYN appears on `pppoe-wan` at all,
+  while `curl https://github.com/` gets a SYN/SYNACK and HTTP 200 from the same
+  source address. `openssl s_client -connect <ip>:443 -servername github.com`
+  also connects.
+- Fix: `fetch()` prefers `curl -fsSL` and falls back to `uclient-fetch`, and
+  `cmd_fetch` writes to a temp file that only replaces the cached ipk after the
+  checksum matches — a failed download must not destroy a cached package that
+  offline rollback depends on. `http_get()` buffers each attempt so a partial
+  body from a failed request is never read as a reply, and H2 retries for 20s
+  because the API may not have bound its port yet. `bootstrap.sh` gets the same
+  helper: it is the first-install path and hit the identical wall.
+- Also: `wait_pid()` waits for procd to report a pid before any
+  restart-then-health check. `restart` returns before the new process exists, so
+  the previous code could read an empty pid on a perfectly healthy daemon. An
+  upgrade whose daemon never appears rolls back like any other health failure
+  instead of exiting with the new package installed.
+
 ## Config and behaviour on v0.25.0 (2026-11-11)
 
 Checked against the tag source and the published `numa-linux-aarch64.tar.gz`

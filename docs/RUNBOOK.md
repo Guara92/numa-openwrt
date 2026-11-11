@@ -80,6 +80,40 @@ numa-ctl upgrade        # fetch + stage on :5399 + install + health, auto-rollba
 numa-ctl rollback       # install the previous cached ipk
 ```
 
+Release downloads prefer `curl -fsSL` and fall back to `uclient-fetch`. Some
+OpenWrt builds cannot fetch from `github.com` with `uclient-fetch`: it connects
+and reaches TLS, but the request never goes out once SNI is set, while `curl` to
+the same address succeeds.
+
+If the router can reach GitHub with neither tool, download on a PC and copy the
+files over. **On the PC:**
+
+```sh
+B=https://github.com/Guara92/numa-openwrt/releases/latest/download
+mkdir -p numa-update && cd numa-update
+curl -fsSLO "$B/manifest.json"
+curl -fsSLO "$B/manifest.json.sig"
+IPK=$(sed -n 's/.*"name":"\([^"]*\.ipk\)".*/\1/p' manifest.json)
+curl -fsSL -o "$IPK" "$B/$IPK"
+scp -O manifest.json manifest.json.sig "$IPK" root@router:/tmp/
+```
+
+**On the router**, verify both, then install. Each step stops the flow, so a
+tampered or truncated file cannot reach `opkg install`:
+
+```sh
+set -e
+cd /tmp
+usign -V -m manifest.json -s manifest.json.sig -p /etc/numa/keys/numa-openwrt.pub \
+    || { echo "signature INVALID, refusing to install" >&2; exit 1; }
+IPK=$(jsonfilter -i manifest.json -e '$.ipk.name')
+want=$(jsonfilter -i manifest.json -e '$.ipk.sha256')
+got=$(sha256sum "$IPK" | cut -d' ' -f1)
+[ "$got" = "$want" ] || { echo "sha256 mismatch, refusing to install" >&2; exit 1; }
+opkg install "$IPK"
+/etc/init.d/numa restart
+```
+
 `stage` runs the candidate on `:5399` with a copy of the live state, so a bad
 binary never touches `:53`.
 

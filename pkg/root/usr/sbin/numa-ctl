@@ -58,9 +58,49 @@ cfg_get() {
 lan_v4() { cfg_get api_bind_addr; }
 api_port() { cfg_get api_port; }
 
+# uclient-fetch cannot reach github.com on some OpenWrt builds: it connects
+# (an IP literal reaches the TLS layer) but never sends the request once SNI is
+# involved, while curl to the same IP succeeds. curl is the reliable transport
+# for release downloads; uclient-fetch stays as the fallback so a minimal image
+# still works for hosts it can reach.
 fetch() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL -m 300 -o "$2" "$1" && return 0
+        # Fall through: a curl build without TLS or a transient failure should
+        # not be worse than the old behaviour. Drop the partial body first so a
+        # caller that ignores the status cannot read a truncated file.
+        rm -f "$2"
+    fi
     need uclient-fetch "opkg install uclient-fetch"
-    uclient-fetch -q -O "$2" "$1"
+    uclient-fetch -q -O "$2" "$1" || { rm -f "$2"; return 1; }
+}
+
+# Local plain-HTTP GET to stdout. Same transport preference as fetch(): curl
+# first because uclient-fetch has proven unreliable on at least one build, with
+# uclient-fetch as the fallback for images without curl. Each attempt is
+# buffered and its body emitted only when that attempt succeeded, so a partial
+# response from a failed request can never be mistaken for a reply.
+http_get() {
+    _hg_url=$1
+    if command -v curl >/dev/null 2>&1; then
+        _hg_out=$(curl -fsS -m 10 "$_hg_url" 2>/dev/null) && { printf '%s' "$_hg_out"; return 0; }
+    fi
+    if command -v uclient-fetch >/dev/null 2>&1; then
+        _hg_out=$(uclient-fetch -q -O - "$_hg_url" 2>/dev/null) && { printf '%s' "$_hg_out"; return 0; }
+    fi
+    return 1
+}
+
+# procd starts and restarts asynchronously: health() would otherwise read an
+# empty or stale pid and call a healthy daemon dead.
+wait_pid() { # wait_pid [tries]
+    _i=0
+    while [ "$_i" -lt "${1:-20}" ]; do
+        _p=$(numa_pid)
+        [ -n "$_p" ] && { printf '%s' "$_p"; return 0; }
+        _i=$((_i + 1)); sleep 1
+    done
+    return 1
 }
 
 probe() { # probe ADDR PORT NAME TYPE [tcp]
@@ -131,9 +171,14 @@ cmd_fetch() { # fetch [ver]
     fi
     _ipk="numa_${_ver}_aarch64_cortex-a53.ipk"
     _sha=$(jsonfilter -i "$_w/manifest.json" -e '$.ipk.sha256')
-    fetch "$_base/$_ipk" "$PKGCACHE/$_ipk"
-    _got=$(sha256sum "$PKGCACHE/$_ipk" | cut -d' ' -f1)
+    # Download beside the cache and move it in only after the checksum matches.
+    # Writing straight at the final name would destroy a previously cached copy
+    # of the same version on a failed download, losing the package that offline
+    # rollback and firmware recovery depend on.
+    fetch "$_base/$_ipk" "$_w/$_ipk" || die "download failed: $_base/$_ipk"
+    _got=$(sha256sum "$_w/$_ipk" | cut -d' ' -f1)
     [ "$_got" = "$_sha" ] || die "ipk sha256 mismatch: got $_got want $_sha"
+    mv -f "$_w/$_ipk" "$PKGCACHE/$_ipk"
     list_ipks | sed -n '3,$p' | while read -r f; do rm -f "$f" "$f.sha256"; done
     log "fetched $PKGCACHE/$_ipk"
     rm -rf "$_w"
@@ -151,10 +196,21 @@ health() { # health <pid> <v4> <ula> <port> <api_port>
         return 1
     fi
 
-    _code=$(uclient-fetch -q -O - "http://$_v4:$_api/health" 2>/dev/null \
-        | sed -n 's/.*"status"[^,}]*"\([a-z]*\)".*/\1/p')
-    [ -n "$_code" ] || _code=$(uclient-fetch -q -O - "http://$_v4:$_api/health" 2>/dev/null)
-    case "$_code" in *ok*|*healthy*|*200*|*'{'*) ;; *) log "H2 fail: /health on $_v4:$_api -> $_code"; _fail=1 ;; esac
+    # /health is a local plain-HTTP GET; http_get() picks the transport. Retry
+    # while the API is still binding: right after a restart the port is often
+    # not listening yet, and one failed request must not fail the suite.
+    _h2=0; _i=0; _code=
+    while [ "$_i" -lt 20 ]; do
+        if _h=$(http_get "http://$_v4:$_api/health"); then
+            _code=$(printf '%s' "$_h" | sed -n 's/.*"status"[^,}]*"\([a-z]*\)".*/\1/p')
+            [ -n "$_code" ] || _code=$_h
+            case "$_code" in
+                *ok*|*healthy*|*200*|*'{'*) _h2=1; break ;;
+            esac
+        fi
+        _i=$((_i + 1)); sleep 1
+    done
+    [ "$_h2" = 1 ] || { log "H2 fail: /health on $_v4:$_api -> '${_code:-}'"; _fail=1; }
 
     for _a in 127.0.0.1 ::1 "$_v4" "$_ula"; do
         [ -n "$_a" ] || continue
@@ -285,15 +341,23 @@ cmd_upgrade() {
     cmd_stage --ipk "$_ipk" || die "staged binary failed health; aborting upgrade"
     opkg install "$_ipk" || die "opkg install failed"
     /etc/init.d/numa restart
-    if health "$(numa_pid)" "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)"; then
-        log "upgrade OK"
-        return 0
+    # A daemon that never appears is a failed upgrade, not a reason to stop:
+    # the new package is already installed and must be rolled back like any
+    # other health failure, or the router is left without a resolver.
+    if _pid=$(wait_pid); then
+        if health "$_pid" "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)"; then
+            log "upgrade OK"
+            return 0
+        fi
+        log "post-upgrade health failed; rolling back"
+    else
+        log "numa did not come back after the upgrade; rolling back"
     fi
-    log "post-upgrade health failed; rolling back"
     [ -n "$_prev" ] || die "no previous ipk to roll back to"
     opkg install --force-downgrade "$_prev" || die "rollback install failed"
     /etc/init.d/numa restart
-    health "$(numa_pid)" "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)" || die "rollback still unhealthy"
+    _pid=$(wait_pid) || die "numa did not come back after the rollback"
+    health "$_pid" "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)" || die "rollback still unhealthy"
     exit 1
 }
 
@@ -304,7 +368,8 @@ cmd_rollback() {
     [ -n "$_prev" ] || die "no previous ipk"
     opkg install --force-downgrade "$_prev" || die "rollback install failed"
     /etc/init.d/numa restart
-    health "$(numa_pid)" "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)" || exit 1
+    _pid=$(wait_pid) || die "numa did not come back after the rollback"
+    health "$_pid" "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)" || exit 1
     log "rollback OK"
 }
 
@@ -384,7 +449,12 @@ cmd_enable() {
         _i=$((_i + 1)); sleep 1
     done
 
-    if ! health "$(numa_pid)" "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)"; then
+    if ! _pid=$(wait_pid); then
+        _rollback=0
+        cmd_disable
+        die "numa did not start"
+    fi
+    if ! health "$_pid" "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)"; then
         _rollback=0
         cmd_disable
         die "enable health failed"
