@@ -37,9 +37,6 @@ jobs:
       rev: ${{ steps.read.outputs.rev }}
       tag: ${{ steps.read.outputs.tag }}
       commit: ${{ steps.read.outputs.commit }}
-      pr: ${{ steps.read.outputs.pr }}
-      head: ${{ steps.read.outputs.head }}
-      source: ${{ steps.read.outputs.source }}
       semver: ${{ steps.read.outputs.semver }}
       ipk_version: ${{ steps.read.outputs.ipk_version }}
       rel_tag: ${{ steps.read.outputs.rel_tag }}
@@ -56,15 +53,12 @@ jobs:
                 k=kv[1]; gsub(/[[:space:]]/,"",k); if (k!=key) next
                 v=kv[2]; gsub(/^[[:space:]]+|[[:space:]]+$/,"",v); gsub(/"/,"",v); print v; exit }' upstream.lock
           }
-          source=$(lock_get mimalloc source)
           tag=$(lock_get upstream tag)
           rev=$(lock_get build rev)
           semver=${tag#v}
-          if [ "$source" = pr ]; then
-            matrix='{"include":[{"cpu":"generic","alloc":"musl"},{"cpu":"generic","alloc":"mimalloc"},{"cpu":"cortex-a73","alloc":"musl"},{"cpu":"cortex-a73","alloc":"mimalloc"}]}'
-          else
-            matrix='{"include":[{"cpu":"generic","alloc":"mimalloc"},{"cpu":"cortex-a73","alloc":"mimalloc"}]}'
-          fi
+          # Upstream links mimalloc on every musl target (PR #395, v0.25.0), so
+          # the only axis is the CPU baseline.
+          matrix='{"include":[{"cpu":"generic"},{"cpu":"cortex-a73"}]}'
           {
             echo "rust=$(lock_get '' rust)"
             echo "matrix=$matrix"
@@ -72,9 +66,6 @@ jobs:
             echo "rev=$rev"
             echo "tag=$tag"
             echo "commit=$(lock_get upstream commit)"
-            echo "pr=$(lock_get mimalloc pr)"
-            echo "head=$(lock_get mimalloc head)"
-            echo "source=$source"
             echo "semver=$semver"
             echo "ipk_version=$semver-$rev"
             echo "rel_tag=v$semver-r$rev"
@@ -97,25 +88,33 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools qemu-user dnsutils file llvm binutils
       - name: prepare-src
-        run: sh scripts/prepare-src.sh ${{ matrix.alloc }}
+        run: sh scripts/prepare-src.sh
       # After prepare-src: the Cargo workspace lives in src/, so this is the
       # first point a lockfile exists to key the cache on.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
-          # -sde1 drops pre-SOURCE_DATE_EPOCH caches (stale mimalloc banner)
-          key: ${{ matrix.cpu }}-${{ matrix.alloc }}-sde1
+          # -v25mim bumps the key on the v0.25.0 pin: the upstream lock now
+          # compiles mimalloc itself, so a reused object is wrong.
+          key: ${{ matrix.cpu }}-v25mim
           workspaces: src
       - name: check-features (cortex-a73)
         if: matrix.cpu == 'cortex-a73'
         run: sh scripts/check-features.sh
       - name: build
         env:
-          VARIANT: ${{ matrix.cpu }}-${{ matrix.alloc }}
+          VARIANT: ${{ matrix.cpu }}
         run: sh scripts/build.sh
+      # Runs the just-built binary natively (the runner is arm64), so a
+      # serde_ignored regression in the generated or the smoke config fails here
+      # instead of silently starting on defaults.
+      - name: check-config (unknown keys)
+        env:
+          VARIANT: ${{ matrix.cpu }}
+        run: sh scripts/check-config.sh "dist/numa-$VARIANT"
       - name: qemu ISA gate (cortex-a73)
         if: matrix.cpu == 'cortex-a73'
         env:
-          VARIANT: ${{ matrix.cpu }}-${{ matrix.alloc }}
+          VARIANT: ${{ matrix.cpu }}
         run: |
           set -eu
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUNNER="qemu-aarch64 -cpu cortex-a72"
@@ -125,15 +124,15 @@ jobs:
           qemu-aarch64 -cpu cortex-a72 "dist/numa-$VARIANT" --version
       - name: smoke (native, dual-stack)
         env:
-          VARIANT: ${{ matrix.cpu }}-${{ matrix.alloc }}
+          VARIANT: ${{ matrix.cpu }}
         run: sudo -E sh scripts/smoke.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: numa-${{ matrix.cpu }}-${{ matrix.alloc }}
+          name: numa-${{ matrix.cpu }}
           path: |
-            dist/numa-${{ matrix.cpu }}-${{ matrix.alloc }}
-            dist/numa-${{ matrix.cpu }}-${{ matrix.alloc }}.sha256
-            dist/numa-${{ matrix.cpu }}-${{ matrix.alloc }}.info
+            dist/numa-${{ matrix.cpu }}
+            dist/numa-${{ matrix.cpu }}.sha256
+            dist/numa-${{ matrix.cpu }}.info
           if-no-files-found: error
 
   release:

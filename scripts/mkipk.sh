@@ -29,7 +29,6 @@ variant=${PUBLISH_VARIANT:-$(lock_get build publish)}
 rev=$(lock_get build rev)
 tag=$(lock_get upstream tag)
 up_commit=$(lock_get upstream commit)
-mm_head=$(lock_get mimalloc head)
 semver=${tag#v}
 version=${VERSION:-$semver-$rev}
 
@@ -59,7 +58,7 @@ install -m 0755 "$bin" "$stage/usr/sbin/numa"
 sed -e "s/@VERSION@/$version/" \
     -e "s/@UPSTREAM_TAG@/$tag/" \
     -e "s/@UPSTREAM_COMMIT@/$up_commit/" \
-    -e "s/@MIMALLOC_HEAD@/$mm_head/" \
+    -e "s/@VARIANT@/$variant/" \
     "$root/pkg/CONTROL/control.in" > "$stage/CONTROL/control"
 cp "$root/pkg/CONTROL/conffiles" "$stage/CONTROL/conffiles"
 cp "$root/pkg/CONTROL/postinst" "$root/pkg/CONTROL/prerm" "$stage/CONTROL/"

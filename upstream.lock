@@ -4,15 +4,14 @@ rust = "1.99.0"
 
 [upstream]
 repo   = "razvandimescu/numa"
-tag    = "v0.24.1"
-commit = "c7385c78512b81ee096d41e4b27dab8ebe5b8e7e"
+tag    = "v0.25.0"
+commit = "91389fe65dfd6e36937b4d96fa95de5ef0239120"
 
+# Upstream links mimalloc on musl targets itself, so this repo applies no patch.
 [mimalloc]
-source = "pr"                              # "pr" | "upstream" (after upstream release)
-pr     = 395
-head   = "a892fbadaa65fdb85697be194afd4092b13c4017"
+source = "upstream"
 
 [build]
-publish = "generic-mimalloc"               # variant packaged in the ipk; "cortex-a73-mimalloc" is also built
-rev     = 12                               # ipk version <upstream>-<rev>; release tag v<upstream>-r<rev>
-describe = "v0.24.1-5-g373db8a"            # expected `git describe` after the overlay; mismatch warns
+publish = "generic"                        # variant packaged in the ipk; "cortex-a73" is also built
+rev     = 1                                # ipk version <upstream>-<rev>; release tag v<upstream>-r<rev>
+describe = "v0.25.0-0-g91389fe"            # expected `git describe` of the tag; mismatch warns

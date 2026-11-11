@@ -7,6 +7,11 @@ Executed 2026-10-05 on the live router (`<router v4>`, off-peak), load from the
 wired client `<client v4>`. Staged binary: `generic-mimalloc` extracted from
 the cached `numa_0.24.1-9_aarch64_cortex-a53.ipk`.
 
+**Reload RSS.** These numbers come from the v0.24.1 reload path. v0.25.0 sets
+`PURGE_DELAY=0` and calls `mi_collect(true)` around a blocklist reload
+(`serve.rs`), so the reload peak below is not representative. `ARENA_RESERVE`
+is unaffected by those calls and remains the only knob this repo sets.
+
 ## Scope and invariants
 
 - Binary: `generic-mimalloc` (the published variant). No rebuild; every cell
@@ -169,8 +174,8 @@ cell runs were unaffected.
 ### Microbench (`pipeline_parallel`)
 
 Not run: the release ipk ships no bench binary, and building `cargo bench`
-locally (prepare-src + cherry-pick PR #395 + musl toolchain) is out of scope for
-an env-only matrix. Remains TBD in `BENCH.md`.
+locally (musl toolchain + aarch64 host) is out of scope for an env-only matrix.
+The pinned tag builds the bench directly. Remains TBD in `BENCH.md`.
 
 ## Decision
 

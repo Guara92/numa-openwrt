@@ -3,18 +3,22 @@
 Verification log. `⚠` items from the design notes get a line here once checked
 on the device or in CI. Keep it factual: command, result.
 
-## Pins (re-verified 2026-10-04)
+## Pins (re-verified 2026-11-11)
 
-- upstream tag `v0.24.1` -> commit `c7385c78512b81ee096d41e4b27dab8ebe5b8e7e` (latest release).
-- PR #395 head -> `a892fbadaa65fdb85697be194afd4092b13c4017`, **open, not merged** (`mimalloc.source=pr`).
+- upstream tag `v0.25.0` -> commit `91389fe65dfd6e36937b4d96fa95de5ef0239120` (latest release).
+- mimalloc comes from upstream: v0.25.0 depends on `mimalloc 0.1.52` and
+  `libmimalloc-sys 0.1.49` under `cfg(target_env = "musl")`, so this repo applies
+  no patch. `cargo tree --target aarch64-unknown-linux-musl` lists both; the gnu
+  target lists neither.
 - rust pinned `1.99.0`.
 - `-C target-cpu=cortex-a73` target features (rustc 1.99.0, `aarch64-unknown-linux-musl`):
   `aes crc neon pmuv3 sha2` (+ `crt-static`). Mapped to cpuinfo: `aes pmull crc32 asimd sha1 sha2`
   - `pmuv3` and `crt-static` are in `scripts/check-features.sh` IGNORE (PMU baseline / linkage, not user-space ISA).
 - OpenWrt 21.02 `scripts/ipkg-build` pinned at `78e4cffcd882389cb8f0bf818303f85f8d1e9c8e`.
 - usign pinned at `c4c72b1b07945ee192361dc751291a7c98d6adcd`.
-- PR #395 microbench is the `pipeline_parallel` group inside `benches/throughput.rs`
-  (no standalone bench file): `cargo bench --bench throughput pipeline_parallel`.
+- mimalloc microbench is the `pipeline_parallel` group inside
+  `benches/throughput.rs` (no standalone bench file):
+  `cargo bench --bench throughput pipeline_parallel`.
 
 ## CI / release results (2026-10-05)
 
@@ -24,14 +28,13 @@ shipped `runner/runner`-owned files).
 
 | check | result |
 |---|---|
-| 4 variants built (`generic`/`cortex-a73` x `musl`/`mimalloc`) | pass |
+| built variants | `generic` and `cortex-a73`, both with mimalloc |
 | `check-features.sh` (cortex-a73) | pass |
 | qemu ISA gate (`qemu-aarch64 -cpu cortex-a72`, `--lib --skip socket`, `--version`) | pass |
 | native dual-stack `smoke.sh` (UDP+TCP on 5 addrs, idle RSS) | pass |
 | `musl-gcc` native arm64 musl linking | pass (no `cross` fallback needed) |
 | `ipkg-build` (21.02) + `mkmanifest` + usign sign | pass |
 | ipk files owned `root:root` (fakeroot) | pass |
-| overlay `describe` identical across mimalloc legs (`v0.24.1-5-g373db8a`) | pass |
 | `usign -V` on this PC against the repo pubkey | pass (`OK`) |
 
 ipk (`numa_0.24.1-2_aarch64_cortex-a53.ipk`) verified: gzip tar with
@@ -45,8 +48,8 @@ CI gotchas found and fixed (keep in mind when changing these files):
 - `strategy.matrix` must resolve to a **mapping**; `fromJson` of a bare array
   fails with "A sequence was not expected". Use `{"include":[...]}`.
 - `replace()` is **not** a GitHub Actions expression function.
-- GitHub Actions runners have no git identity; `cherry-pick --continue` aborts
-  with "empty ident name" unless the clone sets `user.name`/`user.email`.
+- GitHub Actions runners have no git identity; a step that creates a commit in
+  a fresh clone needs a repo-local `user.name`/`user.email`.
 - `upload-artifact` drops the exec bit (files land 0644); do not gate on `-x`.
 - `ipkg-build` 21.02 takes only `[-v] [-h] [-m]`; no `-o`/`-g`.
 
@@ -57,33 +60,24 @@ CI gotchas found and fixed (keep in mind when changing these files):
   stamps every tar member from a stable value. It reads the epoch back with
   `date --date=@...`, hence the C locale is required or GNU tar rejects the string.
 
-Overlay hash reproducibility (resolved):
-
-- `git describe` reaches the binary (build version), so a different overlay
-  commit hash yields a different binary `sha256` and blocks byte comparison with
-  a release artifact.
-- Cause of the drift: developer-global git config and env leak into commit
-  creation. `commit.gpgsign` embeds a `gpgsig`; `core.hooksPath` can run
-  `prepare-commit-msg`; `commit.cleanup`/`core.commentChar` alter the message
-  rewritten by `cherry-pick --continue`; `GIT_COMMITTER_NAME`/`GIT_COMMITTER_EMAIL`
-  override the clone's `user.*`. `cargo fetch` also regenerated `Cargo.lock`
-  against the live registry.
-- Fix: `prepare-src.sh` isolates the throwaway clone (`GIT_CONFIG_GLOBAL=/dev/null`,
-  `GIT_CONFIG_NOSYSTEM=1`, unsets the committer env, local `commit.gpgsign=false`)
-  and applies a frozen `targets/overlay-Cargo.lock.diff` instead of `cargo fetch`.
-  The expected `git describe` is pinned as `[build].describe` in `upstream.lock`;
-  a mismatch warns. Verified: local and CI both give `v0.24.1-5-g373db8a`.
-
 Binary reproducibility (mimalloc banner):
 
 - mimalloc (C) compiles `__DATE__`/`__TIME__` into its version banner, so the
-  mimalloc binaries were reproducible only by an accident of the CI cache: r3
-  and r4 shipped the same `generic-mimalloc` (a stale cached C object) but a
-  different `cortex-a73-mimalloc`, which recompiled on each build.
-- Fix: `build.sh` exports `SOURCE_DATE_EPOCH` from the source HEAD commit date
-  before `cargo build`; the `cc` crate inherits it and gcc derives both macros
-  from it. The `rust-cache` key gained an `-sde1` suffix to drop the stale
-  object. Verified locally: gcc maps `SOURCE_DATE_EPOCH` to `__DATE__`/`__TIME__`.
+  binary changes on every rebuild unless the epoch is pinned. The upstream
+  aarch64 asset embeds `Oct 23 2026` for the same reason.
+- `build.sh` exports `SOURCE_DATE_EPOCH` from the source HEAD commit date before
+  `cargo build`; the `cc` crate inherits it and gcc derives both macros from it.
+  Verified locally: gcc maps `SOURCE_DATE_EPOCH` to `__DATE__`/`__TIME__`.
+- `SOURCE_DATE_EPOCH` is not in `cc`'s `rerun-if-env-changed` set (gcc reads it,
+  not `cc`), so changing the epoch alone does not force a C rebuild. That is why
+  the flag and the `-v25mim` cache-key suffix both stay: the suffix drops objects
+  built against a different dependency graph.
+- `Cargo.toml` pins `libmimalloc-sys = "=0.1.49"`, so the resolved dependency is
+  part of Cargo's build-script fingerprint and a new mimalloc release cannot
+  silently reuse a stale object. `cc` emits `rerun-if-env-changed` for everything
+  it reads, so `CFLAGS_aarch64_unknown_linux_musl` is honoured deliberately.
+- `git describe` reaches the binary (build version), so `[build].describe` in
+  `upstream.lock` stays as the drift detector.
 
 ## Runtime allocator tuning (2026-10-05)
 
@@ -93,6 +87,38 @@ Matrix executed on the device: `docs/BENCH-mimalloc.md`. Only
 side). `PURGE_DELAY`, `PURGE_DECOMMITS`, `MINIMAL_PURGE_SIZE`, `ALLOW_THP` and
 `USE_NUMA_NODES` have no net win. `init.d/numa` exports
 `MIMALLOC_ARENA_RESERVE=64M` to procd; override in `/etc/numa/numa.env`.
+
+## Config and behaviour on v0.25.0 (2026-11-11)
+
+Checked against the tag source and the published `numa-linux-aarch64.tar.gz`
+(4700861 B, sha256 `2d25f89…571b2`, inner binary 9608488 B, static, stripped).
+
+- The generated `numa.toml` and `tests/smoke.toml` load with **zero** unknown-key
+  warnings, enforced by `scripts/check-config.sh` in CI. The only key added in
+  this range is `[proxy] authoritative` (default `true`); a field-level diff of
+  `src/config.rs` shows nothing else, so `gen-config` needs no change.
+- A named config file that does not exist is fatal: `numa run /nonexistent.toml`
+  -> `Error: config file not found`, rc 1. `init.d/numa` checks for the file
+  before starting, so the log says why instead of procd respawning on exit.
+- `-c/--config FILE` works before or after the subcommand. The positional form
+  still works, so `PROG run "$CONFIG_FILE"` is unchanged.
+- `names_this_host` exempts loopback only for an exact `numa.<tld>`, not every
+  `*.numa` name. `/health` stays unauthenticated, so the `numa-ctl` probe is
+  unaffected.
+- DNSSEC validation only runs in recursive mode, and the dashboard/`/health`
+  report it off otherwise. This deployment uses `forward`, so `[dnssec] enabled`
+  is a no-op here.
+- `bootstrap_resolver` accepts `upstream.fallback` entries as IP literals only.
+  A DoH entry is skipped even when written as `https://1.1.1.1/dns-query` (it is
+  parsed as an address, not unwrapped), and the hardcoded `9.9.9.9, 1.1.1.1`
+  list is used instead.
+- `MIMALLOC_ARENA_RESERVE=64M` applies: upstream sets `ARENA_EAGER_COMMIT=0` at
+  startup and restores `PURGE_DELAY` after a blocklist reload, neither of which
+  touches the arena reserve. Idle VmSize on the x86_64 build: 130 MB with 64M
+  vs 1113 MB default.
+- Blocklist reload does not copy the domain table and purges eagerly
+  (`load_blocklists_purging`). The reload RSS spike in `BENCH-mimalloc.md` is
+  from the pre-v0.25.0 reload path.
 
 ## Upstream transport (2026-10-05)
 

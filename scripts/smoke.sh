@@ -1,6 +1,6 @@
 #!/bin/sh
 # Native dual-stack smoke test for one built variant.
-# Usage: sudo VARIANT=generic-musl scripts/smoke.sh
+# Usage: sudo VARIANT=generic scripts/smoke.sh   (or VARIANT=cortex-a73)
 #
 # Exits non-zero on any hard failure. The upstream `example.com` check is a
 # warning only (network flake).
@@ -30,7 +30,14 @@ ip addr add 10.99.1.1/24 dev numa0
 ip -6 addr add fd99::1/64 dev numa0 nodad
 
 cp "$root/pkg/root/etc/numa/canary-block.txt" "$work/canary-block.txt"
-sed -e "s#@DATA_DIR@#$work/state#" -e "s#@CANARY@#$work/canary-block.txt#" \
+# Separate fixtures so the allowlist case is unambiguous: one domain only in the
+# block list, one in both lists.
+printf 'allowed-in-both.numa-ctl.internal\n' > "$work/blocked2.txt"
+printf 'allowed-in-both.numa-ctl.internal\n' > "$work/allowed.txt"
+sed -e "s#@DATA_DIR@#$work/state#" \
+    -e "s#@CANARY@#$work/canary-block.txt#" \
+    -e "s#@BLOCKED2@#$work/blocked2.txt#" \
+    -e "s#@ALLOWED@#$work/allowed.txt#" \
     "$root/tests/smoke.toml" > "$work/numa.toml"
 mkdir -p "$work/state"
 
@@ -82,6 +89,18 @@ while [ "$i" -lt 30 ]; do
 done
 [ "$blocked" = 1 ] || { echo "FAIL: blocked.numa-ctl.internal not sinkholed to 0.0.0.0" >&2; fail=1; }
 
+# The allowlist wins over the block list: the name must NOT sinkhole. Its real
+# answer is NXDOMAIN or upstream, so only 0.0.0.0 counts as a failure.
+allowed=0
+i=0
+while [ "$i" -lt 30 ]; do
+    ans=$(dig_short "@127.0.0.1" allowed-in-both.numa-ctl.internal A)
+    [ "$ans" != "0.0.0.0" ] && { allowed=1; break; }
+    i=$((i + 1))
+    sleep 2
+done
+[ "$allowed" = 1 ] || { echo "FAIL: allowlist entry allowed-in-both was sinkholed" >&2; fail=1; }
+
 tag=$(sed -n 's/^TAG=v//p' "$root/dist/build-info.env" 2>/dev/null || true)
 ver=$("$bin" --version 2>&1 || true)
 if [ -n "$tag" ]; then
@@ -91,7 +110,9 @@ if [ -n "$tag" ]; then
     esac
 fi
 
-# Idle RSS must stay low: catches a mimalloc arena_eager_commit regression.
+# Idle RSS must stay low. On musl both knobs are in play: upstream forces
+# ARENA_EAGER_COMMIT=0 at startup, and the init script caps the arena reserve at
+# 64M. Losing either raises RSS, so the threshold catches both.
 sleep 5
 rss=$(awk '/^VmRSS:/ {print $2}' "/proc/$pid/status" 2>/dev/null || echo 0)
 if [ "$rss" -ge 20480 ]; then

@@ -1,0 +1,4 @@
+# Local allowlist. One domain per line; a domain here is never blocked,
+# including its subdomains. Empty by default.
+#
+# A missing file is non-fatal but logs an ERROR on every refresh, so keep it.

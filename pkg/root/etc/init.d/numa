@@ -13,6 +13,13 @@ CONFIG_FILE=/etc/numa/numa.toml
 STATE_DIR=/etc/numa/state
 
 start_service() {
+    # v0.25.0 refuses to start when a named config file is missing. Check it
+    # here so the log says why instead of procd respawning a process that exits.
+    if [ ! -f "$CONFIG_FILE" ]; then
+        logger -t numa "no config at $CONFIG_FILE; refusing to start (run numa-ctl gen-config --apply)"
+        return 1
+    fi
+
     # Refuse to start while dnsmasq still owns :53: numa would bind-fail and
     # the router would have no resolver at all.
     port=$(uci -q get dhcp.@dnsmasq[0].port)

@@ -30,6 +30,11 @@ refresh_hours = 6                 # upstream default is 24
 lists = ["https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/pro-onlydomains.txt",
          "file:///etc/numa/canary-block.txt"]
                                   # jsdelivr instead of raw.githubusercontent (avoids 403/rate limits)
+# allowlist entries are never blocked, subdomains included. Paths and URLs are
+# fetched and refreshed with the lists, so a maintained whitelist needs no
+# dashboard edits. A missing local file is non-fatal but logs an error on every
+# refresh, so the package ships this one.
+allowlist = ["file:///etc/numa/allow.txt"]
 
 [cache]
 max_entries = 100000

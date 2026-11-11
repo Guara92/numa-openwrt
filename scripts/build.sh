@@ -1,16 +1,17 @@
 #!/bin/sh
 # Build one variant and drop it in dist/.
-# Usage: VARIANT={generic|cortex-a73}-{musl|mimalloc} build.sh
+# Usage: VARIANT={generic|cortex-a73}
 #
-# Native arm64 musl linking uses musl-gcc. If that fails on the runner, fall
-# back to `cross build` exactly as upstream does (same target, generic CPU).
+# Native arm64 musl linking uses musl-gcc. Upstream links mimalloc on every
+# musl target, so there is no allocator axis.
 set -eu
 
-: "${VARIANT:?set VARIANT=generic-musl|generic-mimalloc|cortex-a73-musl|cortex-a73-mimalloc}"
-cpu=${VARIANT%-*}
-alloc=${VARIANT##*-}
-case "$cpu" in generic|cortex-a73) ;; *) echo "bad cpu '$cpu' in VARIANT" >&2; exit 2 ;; esac
-case "$alloc" in musl|mimalloc) ;; *) echo "bad alloc '$alloc' in VARIANT" >&2; exit 2 ;; esac
+: "${VARIANT:?set VARIANT=generic|cortex-a73}"
+cpu=$VARIANT
+case "$cpu" in
+    generic|cortex-a73) ;;
+    *) echo "bad cpu '$cpu' in VARIANT (want generic|cortex-a73)" >&2; exit 2 ;;
+esac
 
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 src="$root/src"
@@ -47,14 +48,10 @@ if ! file "$out" | grep -q 'statically linked'; then
     exit 1
 fi
 
-if [ "$alloc" = mimalloc ]; then
-    strings "$out" | grep -qi mimalloc || { echo "numa-$VARIANT: mimalloc not linked" >&2; exit 1; }
-else
-    if strings "$out" | grep -qi mimalloc; then
-        echo "numa-$VARIANT: unexpected mimalloc allocator" >&2
-        exit 1
-    fi
-fi
+# Upstream gates the allocator on cfg(target_env = "musl"), so a musl build
+# without it means the dependency was dropped upstream: catch that here rather
+# than ship a binary 30% slower than expected.
+strings "$out" | grep -qi mimalloc || { echo "numa-$VARIANT: mimalloc not linked" >&2; exit 1; }
 
 sha=$(sha256sum "$out" | cut -d' ' -f1)
 size=$(stat -c %s "$out")

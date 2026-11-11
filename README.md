@@ -11,20 +11,19 @@ they renew. Deployment is manual via `numa-ctl` - nothing auto-deploys to the
 router and no opkg feed is used.
 
 The verified facts and phases are recorded in [docs/NOTES.md](docs/NOTES.md);
-operations are in [docs/RUNBOOK.md](docs/RUNBOOK.md); bench data for upstream
-PR #395 in [docs/BENCH.md](docs/BENCH.md); runtime allocator tuning in
+operations are in [docs/RUNBOOK.md](docs/RUNBOOK.md); router bench data in
+[docs/BENCH.md](docs/BENCH.md); runtime allocator tuning in
 [docs/BENCH-mimalloc.md](docs/BENCH-mimalloc.md).
 
 ## Layout
 
 ```text
 numa-openwrt/
-├── upstream.lock                    pinned upstream tag, PR #395 head, rust
+├── upstream.lock                    pinned upstream tag and rust
 ├── targets/flint4.features          cpuinfo features of the target
-├── targets/overlay-Cargo.lock.diff  frozen tag-lock + mimalloc lock overlay
 ├── scripts/
-│   ├── prepare-src.sh               clone tag, verify sha, apply overlay
-│   ├── build.sh                     VARIANT=<cpu>-<alloc> -> dist/numa-<variant>
+│   ├── prepare-src.sh               clone tag, verify sha
+│   ├── build.sh                     VARIANT=<cpu> -> dist/numa-<cpu>
 │   ├── check-features.sh            rustc features subset of targets/flint4.features
 │   ├── smoke.sh                     native dual-stack network smoke test
 │   ├── mkipk.sh                     wraps OpenWrt 21.02 scripts/ipkg-build
@@ -35,6 +34,7 @@ numa-openwrt/
 │       ├── etc/init.d/numa          procd service
 │       ├── etc/numa/numa.toml.example
 │       ├── etc/numa/canary-block.txt
+│       ├── etc/numa/allow.txt      local allowlist, merged with the blocklists
 │       ├── etc/numa/keys/numa-openwrt.pub
 │       ├── lib/upgrade/keep.d/numa  "/etc/numa/"
 │       └── usr/sbin/numa-ctl
@@ -50,10 +50,10 @@ CI (`build.yml`, `ubuntu-24.04-arm`) is the reference build. Locally:
 
 ```sh
 rustup target add aarch64-unknown-linux-musl
-sh scripts/prepare-src.sh mimalloc            # or musl
-sh scripts/check-features.sh                  # cortex-a73 variants
-VARIANT=cortex-a73-mimalloc sh scripts/build.sh
-sudo VARIANT=cortex-a73-mimalloc sh scripts/smoke.sh
+sh scripts/prepare-src.sh
+sh scripts/check-features.sh                  # cortex-a73 variant
+VARIANT=cortex-a73 sh scripts/build.sh
+sudo VARIANT=cortex-a73 sh scripts/smoke.sh
 ```
 
 Then package and sign:
@@ -99,8 +99,11 @@ including the LAN address, must present the API token:
 
 The 64-hex token is minted on first start, stored owner-only at
 `<data_dir>/api_token` (here `/etc/numa/state/api_token`), and printed on the
-router with `numa token`. Pin it with `[server] api_token` in `numa.toml` or
-`NUMA_API_TOKEN` (env wins).
+router with `numa token -c /etc/numa/numa.toml`. The bare `numa token` reads
+`data_dir` from a config in the working directory and otherwise falls back to
+`/var/lib/numa`, which here is a symlink to `/etc/numa/state`, so pass `-c` to
+be sure. Pin it with `[server] api_token` in `numa.toml` or `NUMA_API_TOKEN`
+(env wins).
 
 Hard rules and the firmware-upgrade procedure are in the runbook. Anything
 touching DHCP or the GL web UI can take DNS and DHCP down; read it first.
