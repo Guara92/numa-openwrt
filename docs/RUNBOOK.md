@@ -80,6 +80,21 @@ numa-ctl upgrade        # fetch + stage on :5399 + install + health, auto-rollba
 numa-ctl rollback       # install the previous cached ipk
 ```
 
+Release downloads prefer `curl -fsSL` and fall back to `uclient-fetch`. Some
+OpenWrt builds cannot fetch from `github.com` with `uclient-fetch`: it connects
+and reaches TLS, but the request never goes out once SNI is set, while `curl` to
+the same address succeeds. If both fail, fetch on a PC and install by hand:
+
+```sh
+B=https://github.com/Guara92/numa-openwrt/releases/latest/download
+cd /tmp && curl -fsSL -O "$B/manifest.json" -O "$B/manifest.json.sig"
+usign -V -m manifest.json -s manifest.json.sig -p /etc/numa/keys/numa-openwrt.pub
+IPK=$(jsonfilter -i manifest.json -e '$.ipk.name')
+curl -fsSL -o "$IPK" "$B/$IPK"
+sha256sum "$IPK"    # compare with $.ipk.sha256 from manifest.json
+opkg install "$IPK" && /etc/init.d/numa restart
+```
+
 `stage` runs the candidate on `:5399` with a copy of the live state, so a bad
 binary never touches `:53`.
 
