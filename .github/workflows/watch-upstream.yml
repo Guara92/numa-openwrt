@@ -18,7 +18,7 @@ jobs:
       # build.yml on the PR it opens. Short-lived (1 h), no long-lived PAT.
       - name: App token
         id: app
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
@@ -70,7 +70,7 @@ jobs:
 
       - name: Open PR
         if: steps.update.outputs.changed == '1'
-        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        uses: peter-evans/create-pull-request@15733dbdfeedb4f7fdb73d13c6f5ac83b710fab8 # v8.1.2
         with:
           token: ${{ steps.app.outputs.token }}
           branch: bot/lock-${{ github.run_id }}
