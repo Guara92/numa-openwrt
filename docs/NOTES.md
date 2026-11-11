@@ -111,14 +111,18 @@ Found on the Flint 4 running numa 0.24.1-7. Two independent defects made
   while `curl https://github.com/` gets a SYN/SYNACK and HTTP 200 from the same
   source address. `openssl s_client -connect <ip>:443 -servername github.com`
   also connects.
-- Fix: `fetch()` prefers `curl -fsSL` and falls back to `uclient-fetch`; a
-  failed curl attempt removes the partial file so a caller that ignores the
-  status cannot read a truncated body. `http_get()` for the `/health` probe
-  uses the same order. `bootstrap.sh` gets the same helper: it is the
-  first-install path and hit the identical wall.
+- Fix: `fetch()` prefers `curl -fsSL` and falls back to `uclient-fetch`, and
+  `cmd_fetch` writes to a temp file that only replaces the cached ipk after the
+  checksum matches — a failed download must not destroy a cached package that
+  offline rollback depends on. `http_get()` buffers each attempt so a partial
+  body from a failed request is never read as a reply, and H2 retries for 20s
+  because the API may not have bound its port yet. `bootstrap.sh` gets the same
+  helper: it is the first-install path and hit the identical wall.
 - Also: `wait_pid()` waits for procd to report a pid before any
   restart-then-health check. `restart` returns before the new process exists, so
-  the previous code could read an empty pid on a perfectly healthy daemon.
+  the previous code could read an empty pid on a perfectly healthy daemon. An
+  upgrade whose daemon never appears rolls back like any other health failure
+  instead of exiting with the new package installed.
 
 ## Config and behaviour on v0.25.0 (2026-11-11)
 
