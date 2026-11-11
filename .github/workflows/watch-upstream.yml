@@ -52,10 +52,17 @@ jobs:
           old_commit=$(lock_get upstream commit)
           old_rev=$(lock_get build rev)
 
-          # A new tag resets the rev: the release tag is v<semver>-r<rev>, so a
-          # carried-over rev would collide with nothing but confuse the history.
+          # The release tag is v<semver>-r<rev>, so a new upstream tag starts at
+          # r1, but a moved commit on the SAME tag must bump: reusing the rev
+          # would point at a release tag that already exists and build.yml
+          # refuses to overwrite it.
           if [ "$tag" != "$old_tag" ] || [ "$sha" != "$old_commit" ]; then
-            set_lock tag "$tag"; set_lock commit "$sha"; set_lock rev 1
+            set_lock tag "$tag"; set_lock commit "$sha"
+            if [ "$tag" = "$old_tag" ]; then
+              set_lock rev "$((old_rev + 1))"
+            else
+              set_lock rev 1
+            fi
             echo "changed=1" >> "$GITHUB_OUTPUT"
           else
             echo "changed=0" >> "$GITHUB_OUTPUT"

@@ -31,8 +31,8 @@ ip -6 addr add fd99::1/64 dev numa0 nodad
 
 cp "$root/pkg/root/etc/numa/canary-block.txt" "$work/canary-block.txt"
 # Separate fixtures so the allowlist case is unambiguous: one domain only in the
-# block list, one in both lists.
-printf 'allowed-in-both.numa-ctl.internal\n' > "$work/blocked2.txt"
+# second block list (the control), one in both lists.
+printf 'control-in-second.numa-ctl.internal\nallowed-in-both.numa-ctl.internal\n' > "$work/blocked2.txt"
 printf 'allowed-in-both.numa-ctl.internal\n' > "$work/allowed.txt"
 sed -e "s#@DATA_DIR@#$work/state#" \
     -e "s#@CANARY@#$work/canary-block.txt#" \
@@ -88,6 +88,19 @@ while [ "$i" -lt 30 ]; do
     sleep 2
 done
 [ "$blocked" = 1 ] || { echo "FAIL: blocked.numa-ctl.internal not sinkholed to 0.0.0.0" >&2; fail=1; }
+
+# Prove the second block list loaded before judging precedence: a domain that is
+# only in that list must sinkhole. Without this, a missing or ignored second list
+# makes the allowlist assertion below pass for the wrong reason (nothing blocked).
+control=0
+i=0
+while [ "$i" -lt 30 ]; do
+    ans=$(dig_short "@127.0.0.1" control-in-second.numa-ctl.internal A)
+    [ "$ans" = "0.0.0.0" ] && { control=1; break; }
+    i=$((i + 1))
+    sleep 2
+done
+[ "$control" = 1 ] || { echo "FAIL: control-in-second not sinkholed; second block list did not load" >&2; fail=1; }
 
 # The allowlist wins over the block list: the name must NOT sinkhole. Its real
 # answer is NXDOMAIN or upstream, so only 0.0.0.0 counts as a failure.

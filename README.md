@@ -91,8 +91,11 @@ the token is a gate, not transport encryption.
 http://<api_bind_addr>:<api_port>       # e.g. http://192.168.1.1:5380
 ```
 
-Loopback is unauthenticated and `/health` is always open. Every other client,
-including the LAN address, must present the API token:
+Loopback is unauthenticated only when the request names this host: `localhost`,
+a `*.localhost` name, an IP literal, or exactly `numa.numa` (case-insensitive;
+numa's own dashboard name). Any other `Host`, including another `*.numa` service
+name, needs the token even from loopback. `/health` is always open. Every other
+client, including the LAN address, must present the API token:
 
 - browser: the HTTP Basic prompt - any username, the token as the password
 - API clients: `Authorization: Bearer <token>`, or Basic
