@@ -77,4 +77,37 @@ sed -e "s#@DATA_DIR@#$work/state#" \
     "$root/tests/smoke.toml" > "$work/smoke.toml"
 check "$work/smoke.toml" tests/smoke.toml || fail=1
 
+# numa-ctl gen-config writes the config a router actually runs, from a heredoc
+# inside the script. Render that heredoc so a key the daemon no longer accepts
+# fails here rather than on the router.
+awk '/cat > "\$_out" <<EOF/{on=1;next} on&&/^EOF$/{exit} on' \
+    "$root/pkg/root/usr/sbin/numa-ctl" > "$work/gen.toml"
+if [ ! -s "$work/gen.toml" ]; then
+    echo "FAIL: could not extract the gen-config heredoc from numa-ctl" >&2
+    fail=1
+else
+    grep -q '^\[upstream\]' "$work/gen.toml" || {
+        echo "FAIL: gen-config heredoc extraction lost its [upstream] section" >&2
+        fail=1
+    }
+    # The heredoc is only valid TOML once its four shell expansions are filled.
+    # shellcheck disable=SC2016  # matching the literal $_name text, not expanding
+    sed -e 's#$_suffix#"lan", "168.192.in-addr.arpa", "d.f.ip6.arpa"#' \
+        -e 's#\$CANARY_A#192.0.2.53#' \
+        -e 's#\$CANARY#canary.numa-ctl.internal#' \
+        -e 's#\$_api#127.0.0.1#' \
+        -e "s#/etc/numa/state#$work/state#" \
+        -e "s#/etc/numa/canary-block.txt#$work/block.txt#" \
+        -e "s#/etc/numa/allow.txt#$work/allow.txt#" \
+        -e 's#^bind_addr .*#bind_addr = "127.0.0.1:15455"#' \
+        -e 's#^api_port .*#api_port = 15482#' \
+        -e 's#^api_bind_addr .*#api_bind_addr = "127.0.0.1"#' \
+        -e 's#^address  *= .*#address = ["127.0.0.1:15353"]#' \
+        -e 's#^fallback *= .*#fallback = []#' \
+        -e 's#^warm .*#warm = []#' \
+        -e 's#^upstream = "127.0.0.1:5354"#upstream = "127.0.0.1:15355"#' \
+        "$work/gen.toml" > "$work/gen.ready.toml"
+    check "$work/gen.ready.toml" "numa-ctl gen-config" || fail=1
+fi
+
 exit "$fail"
