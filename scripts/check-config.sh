@@ -90,7 +90,25 @@ else
         echo "FAIL: gen-config heredoc extraction lost its [upstream] section" >&2
         fail=1
     }
-    # The heredoc is only valid TOML once its four shell expansions are filled.
+    # The heredoc is only valid TOML once its five shell expansions are filled.
+    # $_ts_forward holds a whole [[forwarding]] block built by ts_forward_block().
+    # That block is extracted verbatim and only its argument is substituted, so a
+    # renamed or dropped key inside the real block reaches the parser instead of
+    # being papered over by a hand-written copy.
+    awk '/^ts_forward_block\(\)/ {infn=1; next}
+         infn && /^[[:space:]]*cat <<EOF$/ {on=1; next}
+         infn && on && /^EOF$/ {exit}
+         on {print}
+        ' "$root/pkg/root/usr/sbin/numa-ctl" > "$work/ts.block"
+    if [ ! -s "$work/ts.block" ]; then
+        echo "FAIL: could not extract ts_forward_block from numa-ctl" >&2
+        fail=1
+    fi
+    # shellcheck disable=SC2016  # the block's $1 is the value placeholder
+    sed -e 's#\$1#tailnet.example.ts.net#' "$work/ts.block" > "$work/ts.ready"
+    awk -v blk="$work/ts.ready" '
+         /^\$_ts_forward$/ { while ((getline l < blk) > 0) print l; close(blk); next }
+         { print }' "$work/gen.toml" > "$work/gen.ts.toml"
     # shellcheck disable=SC2016  # matching the literal $_name text, not expanding
     sed -e 's#$_suffix#"lan", "168.192.in-addr.arpa", "d.f.ip6.arpa"#' \
         -e 's#\$CANARY_A#192.0.2.53#' \
@@ -106,7 +124,38 @@ else
         -e 's#^fallback *= .*#fallback = []#' \
         -e 's#^warm .*#warm = []#' \
         -e 's#^upstream = "127.0.0.1:5354"#upstream = "127.0.0.1:15355"#' \
-        "$work/gen.toml" > "$work/gen.ready.toml"
+        "$work/gen.ts.toml" > "$work/gen.ready.toml"
+    # A config that parses is not a config that routes tailnet names. Collapse
+    # each [[forwarding]] block to one "index|suffix|upstream" line so the checks
+    # below can require that ONE block carries both the tailnet suffix and the
+    # MagicDNS upstream. Text matching cannot: it passes a wrong suffix, and it
+    # passes when the suffix and the upstream belong to different blocks.
+    awk '
+        /^\[\[forwarding\]\]$/ { if (blk) print n "|" suf "|" up
+                                 n++; suf = ""; up = ""; blk = 1; next }
+        /^\[/ { if (blk) { print n "|" suf "|" up; blk = 0 } ; next }
+        blk && /^suffix[[:space:]]*=/ { suf = $0; next }
+        blk && /^upstream[[:space:]]*=/ { up = $0; next }
+        END { if (blk) print n "|" suf "|" up }
+    ' "$work/gen.ready.toml" > "$work/blocks"
+    # Each block is "index|suffix-line|upstream-line"; one block must pair the
+    # tailnet suffix with the MagicDNS upstream, and it must come after dnsmasq.
+    _tsblk=$(awk -F'|' -v s='tailnet[.]example[.]ts[.]net' -v u='100[.]100[.]100[.]100:53' \
+        '$2 ~ s && $3 ~ u { print $1; exit }' "$work/blocks")
+    if [ -z "$_tsblk" ]; then
+        echo "FAIL: no single [[forwarding]] block pairs the tailnet suffix" >&2
+        echo "      with the MagicDNS upstream in gen-config's output" >&2
+        fail=1
+    fi
+    _dsblk=$(awk -F'|' -v s='"lan"' -v u='127[.]0[.]0[.]1:15355' \
+        '$2 ~ s && $3 ~ u { print $1; exit }' "$work/blocks")
+    if [ -z "$_dsblk" ]; then
+        echo "FAIL: gen-config's output has no dnsmasq forwarding block" >&2
+        fail=1
+    elif [ -n "$_tsblk" ] && [ "$_tsblk" -lt "$_dsblk" ]; then
+        echo "FAIL: the MagicDNS rule precedes the dnsmasq rule; the latter matches first" >&2
+        fail=1
+    fi
     check "$work/gen.ready.toml" "numa-ctl gen-config" || fail=1
 fi
 

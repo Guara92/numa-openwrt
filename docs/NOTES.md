@@ -210,6 +210,57 @@ Checked against the tag source and the published `numa-linux-aarch64.tar.gz`
   scripts/mkipk.sh`): `numa_0.25.1-1_aarch64_cortex-a53.ipk`, `Architecture`
   and `conffiles` unchanged, data tar `root:root`. CI produces the real one.
 
+## Tailscale MagicDNS (2026-11-15)
+
+`gen-config` reads the tailnet suffix from `tailscale status --json`
+(`CurrentTailnet.MagicDNSSuffix`, only when `MagicDNSEnabled`) and gives it its
+own `[[forwarding]]` block pointing at `100.100.100.100:53`. The suffix is never
+hardcoded: the repo holds no site data, so a device without tailscale, or with
+MagicDNS off, generates exactly the same file as before.
+
+Why it is a separate rule: the dnsmasq rule already carried the suffix, because
+`dhcp.@dnsmasq[0].domain` is the tailnet domain on this router. dnsmasq answers
+those names from its static leases, which shadow the tailnet address, and REFUSES
+names it does not know. Measured on the Flint 4 before the change:
+
+| query | result |
+|---|---|
+| a known `<host>.<tailnet>.ts.net` via numa | the router's LAN addresses, from its static leases |
+| the same name via MagicDNS | the real `100.x` tailnet address |
+| an unknown `*.<tailnet>.ts.net` via numa | `SERVFAIL` in 1 ms (dnsmasq REFUSED) |
+
+The MagicDNS rule is emitted **after** the dnsmasq rule because
+`match_forwarding_rule` returns the first match; listed above, it would never be
+consulted. `gen-config` also drops the suffix from the dnsmasq rule so the two
+do not overlap. One case is not "equal": a dnsmasq suffix that is a **parent** of
+the tailnet suffix (`ts.net`) also matches first, so `gen-config` drops that too.
+Both checks normalize first — lowercase, no trailing dot, no leading dot — because
+that is what `system_dns::ForwardingRule::new` does before comparing. Comparing
+raw strings let `TS.NET` or `tailnet.ts.net.` from UCI slip through and shadow
+MagicDNS again.
+
+Two dependencies that fail without an error:
+
+- `rebind_protect` must stay `false`, which is what `gen-config` emits. Every
+  MagicDNS answer is private — `100.64/10` for A, ULA for AAAA — and it arrives
+  over `QueryPath::Forwarded`, which `returns_trusted_local_data()` reports as
+  untrusted, so `rebind.rs` strips it. The default ranges include
+  `100.64.0.0/10` for exactly this reason. Turning `rebind_protect` on makes the
+  whole tailnet rule return NODATA with no error anywhere.
+- `timeout` must exist. Without it the `tailscale status` call cannot be bounded,
+  so `gen-config` logs `WARN: timeout not installed; MagicDNS rule omitted` and
+  emits no rule rather than risking a hang. BusyBox builds `timeout` only when
+  `CONFIG_BUSYBOX_CONFIG_TIMEOUT` is set; 21.02 defaults it to `n`.
+
+Verified off-device with stubbed `uci`/`ubus`/`jsonfilter`/`tailscale`: with
+MagicDNS on, the tailnet suffix leaves the dnsmasq rule and the
+`100.100.100.100:53` rule appears; with MagicDNS off, or tailscale absent, the
+output is byte-identical to the previous version; with the dnsmasq domain set to
+`lan`, `lan` stays and the MagicDNS rule is still added. The rendered config parses
+on a v0.25.1 binary in all four cases, and `scripts/check-config.sh` covers the
+generated heredoc — including a byte-level check that the MagicDNS rule exists and
+follows the dnsmasq rule, which a config that merely parses does not prove.
+
 ## Upstream transport (2026-10-05)
 
 > Superseded by the IP-literal DoH decision in "Config and behaviour on v0.25.1"
@@ -264,6 +315,11 @@ closed by the firewall; the prefix enumeration is removed from `gen-config`.
   `sleep 1`), `flock` availability (command locking is best-effort), `uci del_list`
   support in `cutover`/`disable`, and the router ULA read from ubus
   `ipv6-prefix-assignment[*].local-address`.
+- `gen-config` dependencies: `timeout` (else the MagicDNS rule is skipped with a
+  WARN) and `jsonfilter` reading a JSON document from **stdin**, which is how the
+  `tailscale status` output is parsed. `jsonfilter` is `jsonpath` from
+  `openwrt/jsonpath@c7e938d` in 21.02; `main.c` defaults `input = stdin`, so the
+  form is supported, but only this one call site relies on it.
 - ⚠ RDNSS advertises the router after `cutover` deletes the `dns` list.
 - ⚠ `localuse` exists in `/etc/init.d/dnsmasq`.
 - ⚠ `uclient-fetch` follows the `releases/latest/download` redirect.

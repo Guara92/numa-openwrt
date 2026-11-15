@@ -598,6 +598,55 @@ cmd_status() {
 
 # --- gen-config ------------------------------------------------------------
 
+# numa normalizes a suffix (lowercase, no trailing dot) before comparing it, so
+# two spellings of one suffix both match at runtime. Comparisons here use the
+# same form or a differently-spelled dnsmasq rule keeps shadowing the tailnet.
+norm_suffix() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -e 's#^\.##' -e 's#\.$##'
+}
+
+# True when a forwarding rule for $1 would claim names under $2 (the tailnet
+# suffix) before the MagicDNS rule is consulted: an equal suffix, or a parent of
+# it. match_forwarding_rule returns the first match, so a parent wins too.
+ts_shadows() { # ts_shadows <rule-suffix> <tailnet-suffix>
+    [ -n "$1" ] || return 1
+    [ -n "$2" ] || return 1
+    case "$2" in
+        "$1"|*".$1") return 0 ;;
+    esac
+    return 1
+}
+
+ts_forward_block() { # ts_forward_block <suffix>
+    # Literal text between the assignment quotes; check-config.sh extracts these
+    # lines and substitutes only the value, so a renamed key here still reaches
+    # the real parser instead of a hand-written copy of the block.
+    cat <<EOF
+[[forwarding]]
+suffix   = ["$1"]
+upstream = "100.100.100.100:53"
+EOF
+}
+
+# Empty when tailscale is absent, MagicDNS is off, or the status call fails.
+tailscale_magicdns_suffix() {
+    command -v tailscale >/dev/null 2>&1 || return 0
+    if ! command -v timeout >/dev/null 2>&1; then
+        # A wedged tailscaled must not hang gen-config, and dropping to no rule
+        # silently would look like the suffix moved on its own. stderr: the
+        # caller captures this function's stdout as the suffix.
+        log "WARN: timeout not installed; MagicDNS rule omitted" >&2
+        return 0
+    fi
+    _tj=$(timeout 5 tailscale status --json 2>/dev/null || true)
+    [ -n "$_tj" ] || return 0
+    _q_en='@["CurrentTailnet"]["MagicDNSEnabled"]'
+    _q_suf='@["CurrentTailnet"]["MagicDNSSuffix"]'
+    _en=$(printf '%s' "$_tj" | jsonfilter -e "$_q_en" 2>/dev/null || true)
+    [ "$_en" = true ] || return 0
+    printf '%s' "$_tj" | jsonfilter -e "$_q_suf" 2>/dev/null || true
+}
+
 wan_networks() {
     for _z in $(uci show firewall 2>/dev/null | sed -n "s/^firewall\.\([^.]*\)=zone$/\1/p"); do
         if [ "$(uci -q get "firewall.$_z.name")" = wan ]; then
@@ -646,13 +695,34 @@ cmd_gen_config() {
     done
 
     [ -n "$_api" ] || _api=127.0.0.1
+
+    # Tailscale MagicDNS answers the tailnet suffix at 100.100.100.100. Left in
+    # the dnsmasq rule it is answered from dnsmasq's static leases, which shadow
+    # the real tailnet address, or REFUSED (SERVFAIL) for names dnsmasq does not
+    # know. The suffix is read from the device, never hardcoded.
+    _ts_suffix=$(tailscale_magicdns_suffix)
+
     for _suf in $(uci -q get dhcp.@dnsmasq[0].local 2>/dev/null || true); do
         _suf=$(echo "$_suf" | tr -d /)
-        [ -n "$_suf" ] && _suffix="$_suffix \"$_suf\","
+        [ -n "$_suf" ] || continue
+        ts_shadows "$(norm_suffix "$_suf")" "$(norm_suffix "$_ts_suffix")" && continue
+        _suffix="$_suffix \"$_suf\","
     done
     _dom=$(uci -q get dhcp.@dnsmasq[0].domain 2>/dev/null || true)
-    [ -n "$_dom" ] && _suffix="$_suffix \"$_dom\","
+    if [ -n "$_dom" ] && ! ts_shadows "$(norm_suffix "$_dom")" "$(norm_suffix "$_ts_suffix")"; then
+        _suffix="$_suffix \"$_dom\","
+    fi
     _suffix="$_suffix \"168.192.in-addr.arpa\", \"d.f.ip6.arpa\""
+
+    # Emitted after the dnsmasq rule because match_forwarding_rule takes the
+    # first match; a rule claiming the tailnet suffix above would shadow this one.
+    # The quotes hold the newlines the command substitution would strip.
+    _ts_forward=
+    if [ -n "$_ts_suffix" ]; then
+        _ts_forward="
+$(ts_forward_block "$_ts_suffix")
+"
+    fi
 
     _out=/etc/numa/numa.toml.new
     cat > "$_out" <<EOF
@@ -698,7 +768,7 @@ warm        = ["cdn.jsdelivr.net"]
 [[forwarding]]
 suffix   = [$_suffix]
 upstream = "127.0.0.1:5354"
-
+$_ts_forward
 [[zones]]
 domain      = "$CANARY"
 record_type = "A"
