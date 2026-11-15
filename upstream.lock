@@ -4,8 +4,8 @@ rust = "1.99.0"
 
 [upstream]
 repo   = "razvandimescu/numa"
-tag    = "v0.25.0"
-commit = "91389fe65dfd6e36937b4d96fa95de5ef0239120"
+tag = "v0.25.1"
+commit = "1073889d217c6ecc9ec1a560675b1e192100bd18"
 
 # Upstream links mimalloc on musl targets itself, so this repo applies no patch.
 [mimalloc]
@@ -13,5 +13,5 @@ source = "upstream"
 
 [build]
 publish = "generic"                        # variant packaged in the ipk; "cortex-a73" is also built
-rev     = 2                                # ipk version <upstream>-<rev>; release tag v<upstream>-r<rev>
+rev = "1"
 describe = "v0.25.0-0-g91389fe"            # expected `git describe` of the tag; mismatch warns
