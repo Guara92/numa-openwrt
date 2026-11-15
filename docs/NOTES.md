@@ -3,17 +3,19 @@
 Verification log. `⚠` items from the design notes get a line here once checked
 on the device or in CI. Keep it factual: command, result.
 
-## Pins (re-verified 2026-11-11)
+## Pins (re-verified 2026-11-15)
 
-- upstream tag `v0.25.0` -> commit `91389fe65dfd6e36937b4d96fa95de5ef0239120` (latest release).
-- mimalloc comes from upstream: v0.25.0 depends on `mimalloc 0.1.52` and
+- upstream tag `v0.25.1` -> commit `1073889d217c6ecc9ec1a560675b1e192100bd18` (latest release).
+- mimalloc comes from upstream: v0.25.1 depends on `mimalloc 0.1.52` and
   `libmimalloc-sys 0.1.49` under `cfg(target_env = "musl")`, so this repo applies
   no patch. `cargo tree --target aarch64-unknown-linux-musl` lists both; the gnu
-  target lists neither.
-- rust pinned `1.99.0`.
-- `-C target-cpu=cortex-a73` target features (rustc 1.99.0, `aarch64-unknown-linux-musl`):
+  target lists neither. Both versions are unchanged from v0.25.0.
+- rust pinned `1.100.0`. v0.25.1 has no `rust-version` and builds on it: the host
+  build (`rustup run 1.100.0 cargo build --release --locked`) succeeds.
+- `-C target-cpu=cortex-a73` target features (rustc 1.100.0, `aarch64-unknown-linux-musl`):
   `aes crc neon pmuv3 sha2` (+ `crt-static`). Mapped to cpuinfo: `aes pmull crc32 asimd sha1 sha2`
   - `pmuv3` and `crt-static` are in `scripts/check-features.sh` IGNORE (PMU baseline / linkage, not user-space ISA).
+  - Identical to the 1.99.0 set, so raising the pin needs no `targets/flint4.features` change.
 - OpenWrt 21.02 `scripts/ipkg-build` pinned at `78e4cffcd882389cb8f0bf818303f85f8d1e9c8e`.
 - usign pinned at `c4c72b1b07945ee192361dc751291a7c98d6adcd`.
 - mimalloc microbench is the `pipeline_parallel` group inside
@@ -64,14 +66,20 @@ Binary reproducibility (mimalloc banner):
 
 - mimalloc (C) compiles `__DATE__`/`__TIME__` into its version banner, so the
   binary changes on every rebuild unless the epoch is pinned. The upstream
-  aarch64 asset embeds `Oct 23 2026` for the same reason.
+  aarch64 asset for v0.25.1 embeds `Nov 15 2026` (its build date) for the same
+  reason.
 - `build.sh` exports `SOURCE_DATE_EPOCH` from the source HEAD commit date before
   `cargo build`; the `cc` crate inherits it and gcc derives both macros from it.
   Verified locally: gcc maps `SOURCE_DATE_EPOCH` to `__DATE__`/`__TIME__`.
-- `SOURCE_DATE_EPOCH` is not in `cc`'s `rerun-if-env-changed` set (gcc reads it,
-  not `cc`), so changing the epoch alone does not force a C rebuild. That is why
-  the flag and the `-v25mim` cache-key suffix both stay: the suffix drops objects
-  built against a different dependency graph.
+- `SOURCE_DATE_EPOCH` is not in `cc`'s `rerun-if-env-changed` set for the `cc`
+  version upstream resolves (gcc reads it, not `cc`), so changing the epoch alone
+  does not force a C rebuild. The rust-cache `key` carries the CPU axis only, not
+  a per-pin suffix: `Cargo.lock` is part of rust-cache's automatic key, so a pin
+  that moves mimalloc misses the cache on its own. Residual gap: a pin that moves
+  without touching `Cargo.lock` reuses the cached `libmimalloc-sys` object and
+  keeps the old date in its banner, which is cosmetic. Closing it properly means
+  exporting the epoch before the cache step and adding `SOURCE_DATE_EPOCH` to
+  rust-cache's `env-vars`.
 - `Cargo.toml` pins `libmimalloc-sys = "=0.1.49"`, so the resolved dependency is
   part of Cargo's build-script fingerprint and a new mimalloc release cannot
   silently reuse a stale object. `cc` emits `rerun-if-env-changed` for everything
@@ -148,6 +156,12 @@ Checked against the tag source and the published `numa-linux-aarch64.tar.gz`
   A DoH entry is skipped even when written as `https://1.1.1.1/dns-query` (it is
   parsed as an address, not unwrapped), and the hardcoded `9.9.9.9, 1.1.1.1`
   list is used instead.
+- `upstream.fallback` feeds two independent consumers, so its entries are not
+  free-form: (1) `bootstrap_resolver`, which keeps only IP-literal entries, and
+  (2) the failover chain, where a bare IP becomes a **plaintext UDP** upstream.
+  A bare `"1.1.1.1"` added to narrow (1) therefore silently adds a plaintext
+  resolver to (2); verified with a local UDP stub, which answered a query after
+  both DoH upstreams were pointed at dead ports.
 - `MIMALLOC_ARENA_RESERVE=64M` applies: upstream sets `ARENA_EAGER_COMMIT=0` at
   startup and restores `PURGE_DELAY` after a blocklist reload, neither of which
   touches the arena reserve. Idle VmSize on the x86_64 build: 130 MB with 64M
@@ -156,7 +170,51 @@ Checked against the tag source and the published `numa-linux-aarch64.tar.gz`
   (`load_blocklists_purging`). The reload RSS spike in `BENCH-mimalloc.md` is
   from the pre-v0.25.0 reload path.
 
+## Config and behaviour on v0.25.1 (2026-11-15)
+
+Checked against the tag source and the published `numa-linux-aarch64.tar.gz`
+(4731144 B, sha256 `be835c90…8b3129`, inner binary 9669936 B, static, `numa 0.25.1`).
+
+- `src/config.rs` is byte-identical to v0.25.0, so the tag itself needs no config
+  change. `scripts/check-config.sh` runs both shipped configs against a v0.25.1
+  binary: zero unknown keys.
+- Upstream endpoints switched from hostname to IP-literal DoH
+  (`https://9.9.9.9/dns-query`, `https://1.1.1.1/dns-query`) for both `address`
+  and `fallback`, in `numa.toml.example` and `numa-ctl gen-config`. Reason: an IP
+  literal gives reqwest no hostname to resolve, so `bootstrap_resolver` never
+  sends the upstream name to `9.9.9.9`/`1.1.1.1` in plaintext. Verified with
+  `RUST_LOG=debug`: the hostname form logs `bootstrap_resolver: resolved
+  dns.quad9.net → 4 addr(s)`, the IP-literal form logs no bootstrap line at all.
+  `NumaResolver` has no cache, so the hostname form paid that lookup on every new
+  connection. Encryption is unchanged (still TLS with certificate validation, as
+  the earlier `curl https://9.9.9.9/dns-query` -> 200 confirms), and both
+  endpoints answered 120/120 unique names with zero 403s, so the IP-literal DoH
+  failure recorded above does not reproduce against these endpoints today.
+- Scope of the fix: it removes the *upstream* hostname lookup only. The blocklist
+  download (`cdn.jsdelivr.net` by default) still resolves through
+  `bootstrap_resolver`, so that name remains visible to the bootstrap resolvers.
+- Upstream failover is now list-ordered instead of SRTT-ordered: a failed
+  upstream is asked last, and about 1 query in 20 re-tests it in the background.
+  `[upstream] srtt = false` disables that state. The shipped config lists one
+  primary plus one `fallback`, so the ordering axis changes nothing here.
+- REFUSED is retried on the next upstream and only returned when every upstream
+  refuses. `9.9.9.9` and Cloudflare do not refuse by design, so this is a no-op
+  for the shipped pair; it matters only if a filtering resolver is listed first.
+- On Linux, a `search local` in `/etc/resolv.conf` no longer becomes a
+  forwarding rule (v0.25.0 created one and every mDNS name waited out a SERVFAIL).
+  The `[[forwarding]]` block from `gen-config` for `lan`, the dnsmasq domain and
+  the reverse zones is unaffected; an explicit `suffix = "local"` rule still wins.
+- Builds on the pinned rust 1.100.0: `rustup run 1.100.0 cargo build --release
+  --locked` and `--version` both pass on the host.
+- Packaging dry run with the published aarch64 binary (`VERSION=0.25.1-1 sh
+  scripts/mkipk.sh`): `numa_0.25.1-1_aarch64_cortex-a53.ipk`, `Architecture`
+  and `conffiles` unchanged, data tar `root:root`. CI produces the real one.
+
 ## Upstream transport (2026-10-05)
+
+> Superseded by the IP-literal DoH decision in "Config and behaviour on v0.25.1"
+> above: both endpoints answer normally today, and the plaintext `fallback` this
+> entry describes is gone. Kept for the diagnostic history.
 
 `/stats` showed ~64% of upstream queries leaving on plaintext UDP. Cause: the
 DoH primary used IP-literal endpoints (`https://9.9.9.9/dns-query`) that failed

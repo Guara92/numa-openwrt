@@ -2,7 +2,7 @@
 # Fail if a shipped numa.toml carries a key this numa does not know.
 # Usage: check-config.sh <path-to-numa-binary>
 #
-# v0.25.0 logs `unknown key \`<path>\` is ignored` via serde_ignored. A renamed or
+# numa logs `unknown key \`<path>\` is ignored` via serde_ignored. A renamed or
 # moved key is otherwise silent: the daemon starts on defaults for that block.
 set -eu
 

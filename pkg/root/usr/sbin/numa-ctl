@@ -673,8 +673,10 @@ rebind_private_ranges = []
 
 [upstream]
 mode       = "forward"
-address    = ["https://dns.quad9.net/dns-query"]
-fallback   = ["https://cloudflare-dns.com/dns-query"]
+# IP-literal DoH: no upstream hostname to resolve, so bootstrap_resolver never
+# sends the name in plaintext; the https:// scheme is what keeps it encrypted.
+address    = ["https://9.9.9.9/dns-query"]
+fallback   = ["https://1.1.1.1/dns-query"]
 timeout_ms = 800
 hedge_ms   = 50
 
