@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   lock:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -37,7 +37,16 @@ jobs:
                 k=kv[1]; gsub(/[[:space:]]/,"",k); if (k!=key) next
                 v=kv[2]; gsub(/^[[:space:]]+|[[:space:]]+$/,"",v); gsub(/"/,"",v); print v; exit }' upstream.lock
           }
-          set_lock() { sed -i "s|^$1 .*|$1 = \"$2\"|" upstream.lock; }
+          # Rewrite the value in place, keeping the alignment padding and any
+          # trailing comment on that line. `s|^$1 .*|...|` replaced the whole
+          # line, so every bot PR also deleted the comments documenting the key.
+          set_lock() { # set_lock KEY VALUE QUOTED(1|0)
+            if [ "$3" = 1 ]; then
+              sed -i "s|^\([[:space:]]*$1[[:space:]]*=[[:space:]]*\)\"[^\"]*\"|\1\"$2\"|" upstream.lock
+            else
+              sed -i "s|^\([[:space:]]*$1[[:space:]]*=[[:space:]]*\)[^[:space:]#][^[:space:]#]*|\1$2|" upstream.lock
+            fi
+          }
 
           repo=$(lock_get upstream repo)
 
@@ -52,21 +61,43 @@ jobs:
           old_commit=$(lock_get upstream commit)
           old_rev=$(lock_get build rev)
 
+          # `describe` is the drift detector prepare-src.sh checks against, so it
+          # must follow the tag. Ask git rather than rebuilding the string by
+          # hand: the same tool that produces it during a build produces it here.
+          describe=$(sh .github/scripts/describe-upstream.sh "$repo" "$tag" "$sha" 2>/dev/null || true)
+          if [ -z "$describe" ]; then
+            echo "WARN: git describe failed for $tag; deriving it from the sha" >&2
+            describe="$tag-0-g$(printf '%s' "$sha" | cut -c1-7)"
+          fi
+
           # The release tag is v<semver>-r<rev>, so a new upstream tag starts at
           # r1, but a moved commit on the SAME tag must bump: reusing the rev
           # would point at a release tag that already exists and build.yml
           # refuses to overwrite it.
+          changed=0
           if [ "$tag" != "$old_tag" ] || [ "$sha" != "$old_commit" ]; then
-            set_lock tag "$tag"; set_lock commit "$sha"
+            set_lock tag "$tag" 1
+            set_lock commit "$sha" 1
             if [ "$tag" = "$old_tag" ]; then
-              set_lock rev "$((old_rev + 1))"
+              set_lock rev "$((old_rev + 1))" 0
             else
-              set_lock rev 1
+              set_lock rev 1 0
             fi
-            echo "changed=1" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=0" >> "$GITHUB_OUTPUT"
+            changed=1
           fi
+
+          # `describe` is written whenever it disagrees with the tag, not only on
+          # a pin move. A pin bumped by hand used to leave it pointing at the
+          # previous tag, and prepare-src.sh then warned on every build. Deriving
+          # it here also heals a PR opened by an older version of this workflow.
+          if [ "$(lock_get build describe)" != "$describe" ]; then
+            set_lock describe "$describe" 1
+            changed=1
+          fi
+
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag commit=$sha describe=$describe rev=$(lock_get build rev)" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Open PR
         if: steps.update.outputs.changed == '1'
@@ -79,3 +110,7 @@ jobs:
           body: |
             Automated `upstream.lock` update. Review the pin diff before merging;
             merging triggers `build.yml`.
+
+            The diff should be value-only: `tag`, `commit`, `describe` and
+            `build.rev`. If comments or alignment moved, the `set_lock` helper in
+            `watch-upstream.yml` is broken.
