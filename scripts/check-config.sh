@@ -90,7 +90,17 @@ else
         echo "FAIL: gen-config heredoc extraction lost its [upstream] section" >&2
         fail=1
     }
-    # The heredoc is only valid TOML once its four shell expansions are filled.
+    # The heredoc is only valid TOML once its five shell expansions are filled.
+    # $_ts_forward holds a whole [[forwarding]] block, so it is expanded with awk
+    # on its own line rather than through sed.
+    awk '/^\$_ts_forward$/ {
+            print ""
+            print "[[forwarding]]"
+            print "suffix   = [\"tailnet.example.ts.net\"]"
+            print "upstream = \"100.100.100.100:53\""
+            next
+         }
+         { print }' "$work/gen.toml" > "$work/gen.ts.toml"
     # shellcheck disable=SC2016  # matching the literal $_name text, not expanding
     sed -e 's#$_suffix#"lan", "168.192.in-addr.arpa", "d.f.ip6.arpa"#' \
         -e 's#\$CANARY_A#192.0.2.53#' \
@@ -106,7 +116,7 @@ else
         -e 's#^fallback *= .*#fallback = []#' \
         -e 's#^warm .*#warm = []#' \
         -e 's#^upstream = "127.0.0.1:5354"#upstream = "127.0.0.1:15355"#' \
-        "$work/gen.toml" > "$work/gen.ready.toml"
+        "$work/gen.ts.toml" > "$work/gen.ready.toml"
     check "$work/gen.ready.toml" "numa-ctl gen-config" || fail=1
 fi
 

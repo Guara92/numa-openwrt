@@ -646,13 +646,41 @@ cmd_gen_config() {
     done
 
     [ -n "$_api" ] || _api=127.0.0.1
+
+    # Tailscale MagicDNS answers the tailnet suffix at 100.100.100.100. Left in
+    # the dnsmasq rule it is answered from dnsmasq's static leases, which shadow
+    # the real tailnet address, or REFUSED (SERVFAIL) for names dnsmasq does not
+    # know. The suffix is read from the device, never hardcoded.
+    _ts_suffix=
+    if command -v tailscale >/dev/null 2>&1; then
+        _ts_json=$(timeout 5 tailscale status --json 2>/dev/null || true)
+        if [ -n "$_ts_json" ] &&
+            [ "$(printf '%s' "$_ts_json" | jsonfilter -e '@["CurrentTailnet"]["MagicDNSEnabled"]' 2>/dev/null || true)" = true ]; then
+            _ts_suffix=$(printf '%s' "$_ts_json" | jsonfilter -e '@["CurrentTailnet"]["MagicDNSSuffix"]' 2>/dev/null || true)
+        fi
+    fi
+
     for _suf in $(uci -q get dhcp.@dnsmasq[0].local 2>/dev/null || true); do
         _suf=$(echo "$_suf" | tr -d /)
-        [ -n "$_suf" ] && _suffix="$_suffix \"$_suf\","
+        [ -n "$_suf" ] || continue
+        [ "$_suf" = "$_ts_suffix" ] && continue
+        _suffix="$_suffix \"$_suf\","
     done
     _dom=$(uci -q get dhcp.@dnsmasq[0].domain 2>/dev/null || true)
-    [ -n "$_dom" ] && _suffix="$_suffix \"$_dom\","
+    [ -n "$_dom" ] && [ "$_dom" != "$_ts_suffix" ] && _suffix="$_suffix \"$_dom\","
     _suffix="$_suffix \"168.192.in-addr.arpa\", \"d.f.ip6.arpa\""
+
+    # Emitted after the dnsmasq rule because match_forwarding_rule takes the
+    # first match; a tailnet suffix that also appears above would never be
+    # consulted. Single quotes keep the multi-line value literal.
+    _ts_forward=
+    if [ -n "$_ts_suffix" ]; then
+        _ts_forward='
+[[forwarding]]
+suffix   = ["'"$_ts_suffix"'"]
+upstream = "100.100.100.100:53"
+'
+    fi
 
     _out=/etc/numa/numa.toml.new
     cat > "$_out" <<EOF
@@ -698,7 +726,7 @@ warm        = ["cdn.jsdelivr.net"]
 [[forwarding]]
 suffix   = [$_suffix]
 upstream = "127.0.0.1:5354"
-
+$_ts_forward
 [[zones]]
 domain      = "$CANARY"
 record_type = "A"

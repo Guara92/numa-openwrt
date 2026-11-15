@@ -13,5 +13,5 @@ source = "upstream"
 
 [build]
 publish = "generic"                        # variant packaged in the ipk; "cortex-a73" is also built
-rev     = 1                                # ipk version <upstream>-<rev>; release tag v<upstream>-r<rev>
+rev     = 2                                # ipk version <upstream>-<rev>; release tag v<upstream>-r<rev>
 describe = "v0.25.1-0-g1073889"            # expected `git describe` of the tag; mismatch warns

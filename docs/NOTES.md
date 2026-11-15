@@ -210,6 +210,37 @@ Checked against the tag source and the published `numa-linux-aarch64.tar.gz`
   scripts/mkipk.sh`): `numa_0.25.1-1_aarch64_cortex-a53.ipk`, `Architecture`
   and `conffiles` unchanged, data tar `root:root`. CI produces the real one.
 
+## Tailscale MagicDNS (2026-11-15)
+
+`gen-config` reads the tailnet suffix from `tailscale status --json`
+(`CurrentTailnet.MagicDNSSuffix`, only when `MagicDNSEnabled`) and gives it its
+own `[[forwarding]]` block pointing at `100.100.100.100:53`. The suffix is never
+hardcoded: the repo holds no site data, so a device without tailscale, or with
+MagicDNS off, generates exactly the same file as before.
+
+Why it is a separate rule: the dnsmasq rule already carried the suffix, because
+`dhcp.@dnsmasq[0].domain` is the tailnet domain on this router. dnsmasq answers
+those names from its static leases, which shadow the tailnet address, and REFUSES
+names it does not know. Measured on the Flint 4 before the change:
+
+| query | result |
+|---|---|
+| a known `<host>.<tailnet>.ts.net` via numa | the router's LAN addresses, from its static leases |
+| the same name via MagicDNS | the real `100.x` tailnet address |
+| an unknown `*.<tailnet>.ts.net` via numa | `SERVFAIL` in 1 ms (dnsmasq REFUSED) |
+
+The MagicDNS rule is emitted **after** the dnsmasq rule because
+`match_forwarding_rule` returns the first match; listed above, it would never be
+consulted. `gen-config` also drops the suffix from the dnsmasq rule so the two
+do not overlap.
+
+Verified off-device with stubbed `uci`/`ubus`/`jsonfilter`/`tailscale`: with
+MagicDNS on, the tailnet suffix leaves the dnsmasq rule and the
+`100.100.100.100:53` rule appears; with MagicDNS off, or tailscale absent, the
+output is unchanged; with the dnsmasq domain set to `lan`, `lan` stays and the
+MagicDNS rule is still added. The rendered config parses on a v0.25.1 binary in
+all four cases, and `scripts/check-config.sh` covers the generated heredoc.
+
 ## Upstream transport (2026-10-05)
 
 > Superseded by the IP-literal DoH decision in "Config and behaviour on v0.25.1"
