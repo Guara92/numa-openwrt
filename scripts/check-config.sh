@@ -91,15 +91,23 @@ else
         fail=1
     }
     # The heredoc is only valid TOML once its five shell expansions are filled.
-    # $_ts_forward holds a whole [[forwarding]] block, so it is expanded with awk
-    # on its own line rather than through sed.
-    awk '/^\$_ts_forward$/ {
-            print ""
-            print "[[forwarding]]"
-            print "suffix   = [\"tailnet.example.ts.net\"]"
-            print "upstream = \"100.100.100.100:53\""
-            next
-         }
+    # $_ts_forward holds a whole [[forwarding]] block built by ts_forward_block().
+    # That block is extracted verbatim and only its argument is substituted, so a
+    # renamed or dropped key inside the real block reaches the parser instead of
+    # being papered over by a hand-written copy.
+    awk '/^ts_forward_block\(\)/ {infn=1; next}
+         infn && /^[[:space:]]*cat <<EOF$/ {on=1; next}
+         infn && on && /^EOF$/ {exit}
+         on {print}
+        ' "$root/pkg/root/usr/sbin/numa-ctl" > "$work/ts.block"
+    if [ ! -s "$work/ts.block" ]; then
+        echo "FAIL: could not extract ts_forward_block from numa-ctl" >&2
+        fail=1
+    fi
+    # shellcheck disable=SC2016  # the block's $1 is the value placeholder
+    sed -e 's#\$1#tailnet.example.ts.net#' "$work/ts.block" > "$work/ts.ready"
+    awk -v blk="$work/ts.ready" '
+         /^\$_ts_forward$/ { while ((getline l < blk) > 0) print l; close(blk); next }
          { print }' "$work/gen.toml" > "$work/gen.ts.toml"
     # shellcheck disable=SC2016  # matching the literal $_name text, not expanding
     sed -e 's#$_suffix#"lan", "168.192.in-addr.arpa", "d.f.ip6.arpa"#' \
@@ -117,6 +125,20 @@ else
         -e 's#^warm .*#warm = []#' \
         -e 's#^upstream = "127.0.0.1:5354"#upstream = "127.0.0.1:15355"#' \
         "$work/gen.ts.toml" > "$work/gen.ready.toml"
+    # A config that parses is not a config that routes tailnet names. Both
+    # failures below are valid TOML, so only a shape check catches them.
+    if ! grep -q '^upstream = "100.100.100.100:53"$' "$work/gen.ready.toml"; then
+        echo "FAIL: gen-config output has no MagicDNS rule (placeholder gone?)" >&2
+        fail=1
+    fi
+    _tsline=$(grep -n '^upstream = "100.100.100.100:53"$' "$work/gen.ready.toml" \
+        | head -n1 | cut -d: -f1)
+    _dsline=$(grep -n '^upstream = "127.0.0.1:15355"$' "$work/gen.ready.toml" \
+        | head -n1 | cut -d: -f1)
+    if [ -n "$_tsline" ] && [ -n "$_dsline" ] && [ "$_tsline" -lt "$_dsline" ]; then
+        echo "FAIL: the MagicDNS rule precedes the dnsmasq rule; the latter matches first" >&2
+        fail=1
+    fi
     check "$work/gen.ready.toml" "numa-ctl gen-config" || fail=1
 fi
 

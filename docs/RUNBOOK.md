@@ -10,6 +10,14 @@ and keeps DHCP plus local names; numa forwards `lan`, the dnsmasq domain and the
 reverse zones to it. Cutover is per DHCP pool, so clients keep their current DNS
 until they renew.
 
+When Tailscale MagicDNS is on, the tailnet suffix gets its own `[[forwarding]]`
+rule pointing at `100.100.100.100:53`, and that suffix is removed from the
+dnsmasq rule. Consequence: names dnsmasq used to answer under the tailnet domain
+— static leases and DHCP hostnames — now go to MagicDNS instead. If a NAS or the
+router was reachable as `<host>.<tailnet>.ts.net` through a lease, that name now
+resolves to the tailnet address, which is the point of the rule but a change in
+behaviour for anything that pinned the old answer.
+
 `numa-ctl` is the only supported way to enable, disable, upgrade and roll back.
 Nothing starts numa at install time.
 
