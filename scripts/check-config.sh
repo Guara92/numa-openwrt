@@ -125,17 +125,34 @@ else
         -e 's#^warm .*#warm = []#' \
         -e 's#^upstream = "127.0.0.1:5354"#upstream = "127.0.0.1:15355"#' \
         "$work/gen.ts.toml" > "$work/gen.ready.toml"
-    # A config that parses is not a config that routes tailnet names. Both
-    # failures below are valid TOML, so only a shape check catches them.
-    if ! grep -q '^upstream = "100.100.100.100:53"$' "$work/gen.ready.toml"; then
-        echo "FAIL: gen-config output has no MagicDNS rule (placeholder gone?)" >&2
+    # A config that parses is not a config that routes tailnet names. Collapse
+    # each [[forwarding]] block to one "index|suffix|upstream" line so the checks
+    # below can require that ONE block carries both the tailnet suffix and the
+    # MagicDNS upstream. Text matching cannot: it passes a wrong suffix, and it
+    # passes when the suffix and the upstream belong to different blocks.
+    awk '
+        /^\[\[forwarding\]\]$/ { if (blk) print n "|" suf "|" up
+                                 n++; suf = ""; up = ""; blk = 1; next }
+        /^\[/ { if (blk) { print n "|" suf "|" up; blk = 0 } ; next }
+        blk && /^suffix[[:space:]]*=/ { suf = $0; next }
+        blk && /^upstream[[:space:]]*=/ { up = $0; next }
+        END { if (blk) print n "|" suf "|" up }
+    ' "$work/gen.ready.toml" > "$work/blocks"
+    # Each block is "index|suffix-line|upstream-line"; one block must pair the
+    # tailnet suffix with the MagicDNS upstream, and it must come after dnsmasq.
+    _tsblk=$(awk -F'|' -v s='tailnet[.]example[.]ts[.]net' -v u='100[.]100[.]100[.]100:53' \
+        '$2 ~ s && $3 ~ u { print $1; exit }' "$work/blocks")
+    if [ -z "$_tsblk" ]; then
+        echo "FAIL: no single [[forwarding]] block pairs the tailnet suffix" >&2
+        echo "      with the MagicDNS upstream in gen-config's output" >&2
         fail=1
     fi
-    _tsline=$(grep -n '^upstream = "100.100.100.100:53"$' "$work/gen.ready.toml" \
-        | head -n1 | cut -d: -f1)
-    _dsline=$(grep -n '^upstream = "127.0.0.1:15355"$' "$work/gen.ready.toml" \
-        | head -n1 | cut -d: -f1)
-    if [ -n "$_tsline" ] && [ -n "$_dsline" ] && [ "$_tsline" -lt "$_dsline" ]; then
+    _dsblk=$(awk -F'|' -v s='"lan"' -v u='127[.]0[.]0[.]1:15355' \
+        '$2 ~ s && $3 ~ u { print $1; exit }' "$work/blocks")
+    if [ -z "$_dsblk" ]; then
+        echo "FAIL: gen-config's output has no dnsmasq forwarding block" >&2
+        fail=1
+    elif [ -n "$_tsblk" ] && [ "$_tsblk" -lt "$_dsblk" ]; then
         echo "FAIL: the MagicDNS rule precedes the dnsmasq rule; the latter matches first" >&2
         fail=1
     fi
