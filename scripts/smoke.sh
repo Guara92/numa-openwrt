@@ -11,7 +11,7 @@ root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 bin="$root/dist/numa-$VARIANT"
 [ -x "$bin" ] || { echo "missing $bin (run scripts/build.sh)" >&2; exit 1; }
 [ "$(id -u)" = 0 ] || { echo "run with sudo" >&2; exit 1; }
-command -v dig >/dev/null 2>&1 || { echo "dig not found: apt-get install dnsutils" >&2; exit 1; }
+command -v dig >/dev/null 2>&1 || { echo "dig not found: apt-get install bind9-dnsutils" >&2; exit 1; }
 
 work=$(mktemp -d)
 pid=

@@ -46,7 +46,7 @@ numa-openwrt/
 
 ## Build
 
-CI (`build.yml`, `ubuntu-24.04-arm`) is the reference build. Locally:
+CI (`build.yml`, `ubuntu-26.04-arm`) is the reference build. Locally:
 
 ```sh
 rustup target add aarch64-unknown-linux-musl

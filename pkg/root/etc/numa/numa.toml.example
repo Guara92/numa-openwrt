@@ -20,8 +20,13 @@ rebind_private_ranges = []        # empty -> upstream built-in private/special r
 
 [upstream]
 mode       = "forward"
-address    = ["https://dns.quad9.net/dns-query"]
-fallback   = ["https://cloudflare-dns.com/dns-query"]   # DoH only: no plaintext leak on failover
+# IP-literal DoH endpoints: same encryption as the hostname form, but no lookup
+# of the upstream hostname, which would otherwise go out in plaintext from
+# bootstrap_resolver to 9.9.9.9/1.1.1.1 over UDP:53 on every new connection.
+# The https:// form matters: a bare IP here is treated as a plaintext UDP
+# upstream and would be used on failover.
+address    = ["https://9.9.9.9/dns-query"]
+fallback   = ["https://1.1.1.1/dns-query"]   # DoH only: no plaintext leak on failover
 timeout_ms = 800                  # upstream default is 5000
 hedge_ms   = 50                   # parallel query after 50ms of silence; 0 disables
 

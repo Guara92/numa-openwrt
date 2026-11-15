@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   config:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       matrix: ${{ steps.read.outputs.matrix }}
       rust: ${{ steps.read.outputs.rust }}
@@ -73,7 +73,7 @@ jobs:
 
   build:
     needs: config
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.config.outputs.matrix) }}
@@ -86,16 +86,18 @@ jobs:
       - name: Deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools qemu-user dnsutils file llvm binutils
+          sudo apt-get install -y musl-tools qemu-user bind9-dnsutils file llvm binutils
       - name: prepare-src
         run: sh scripts/prepare-src.sh
       # After prepare-src: the Cargo workspace lives in src/, so this is the
       # first point a lockfile exists to key the cache on.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
-          # -v25mim bumps the key on the v0.25.0 pin: the upstream lock now
-          # compiles mimalloc itself, so a reused object is wrong.
-          key: ${{ matrix.cpu }}-v25mim
+          # Separate the CPU legs: RUSTFLAGS/CFLAGS are exported inside
+          # build.sh, i.e. after this step, so rust-cache sees them unset and
+          # would key both legs identically. No pin suffix is needed here:
+          # mimalloc comes from upstream's Cargo.lock, which rust-cache hashes.
+          key: ${{ matrix.cpu }}
           workspaces: src
       - name: check-features (cortex-a73)
         if: matrix.cpu == 'cortex-a73'
@@ -138,7 +140,7 @@ jobs:
   release:
     needs: [config, build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     permissions:
       contents: write
       id-token: write
