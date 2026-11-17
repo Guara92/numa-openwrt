@@ -18,6 +18,13 @@ router was reachable as `<host>.<tailnet>.ts.net` through a lease, that name now
 resolves to the tailnet address, which is the point of the rule but a change in
 behaviour for anything that pinned the old answer.
 
+Set `dhcp.@dnsmasq[0].domain` to a LAN-only name (for example `lan`), never to the
+tailnet suffix. Otherwise DHCP hands the tailnet suffix to every client, bare names
+resolve to `100.x` addresses that non-Tailscale clients cannot reach, and leases
+collide with tailnet node names. After changing it, run
+`uci commit dhcp && /etc/init.d/dnsmasq restart`; `gen-config` and a numa restart
+are not needed. Clients pick up the new suffix on lease renewal. See `docs/NOTES.md`.
+
 `numa-ctl` is the only supported way to enable, disable, upgrade and roll back.
 Nothing starts numa at install time.
 

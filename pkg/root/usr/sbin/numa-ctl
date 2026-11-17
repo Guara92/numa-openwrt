@@ -617,6 +617,17 @@ ts_shadows() { # ts_shadows <rule-suffix> <tailnet-suffix>
     return 1
 }
 
+# Appends a suffix to _suffix unless it is empty, already listed, or claimed by
+# the tailnet. Uses _ts_norm and _seen from cmd_gen_config.
+add_dnsmasq_suffix() { # add_dnsmasq_suffix <suffix>
+    _n=$(norm_suffix "$1")
+    [ -n "$_n" ] || return 0
+    ts_shadows "$_n" "$_ts_norm" && return 0
+    case " $_seen " in *" $_n "*) return 0 ;; esac
+    _seen="$_seen $_n"
+    _suffix="$_suffix \"$1\","
+}
+
 ts_forward_block() { # ts_forward_block <suffix>
     # Literal text between the assignment quotes; check-config.sh extracts these
     # lines and substitutes only the value, so a renamed key here still reaches
@@ -702,16 +713,13 @@ cmd_gen_config() {
     # know. The suffix is read from the device, never hardcoded.
     _ts_suffix=$(tailscale_magicdns_suffix)
 
+    # local=/lan/ plus domain=lan is the normal setup; one "lan" entry is enough.
+    _ts_norm=$(norm_suffix "$_ts_suffix")
+    _seen=
     for _suf in $(uci -q get dhcp.@dnsmasq[0].local 2>/dev/null || true); do
-        _suf=$(echo "$_suf" | tr -d /)
-        [ -n "$_suf" ] || continue
-        ts_shadows "$(norm_suffix "$_suf")" "$(norm_suffix "$_ts_suffix")" && continue
-        _suffix="$_suffix \"$_suf\","
+        add_dnsmasq_suffix "$(echo "$_suf" | tr -d /)"
     done
-    _dom=$(uci -q get dhcp.@dnsmasq[0].domain 2>/dev/null || true)
-    if [ -n "$_dom" ] && ! ts_shadows "$(norm_suffix "$_dom")" "$(norm_suffix "$_ts_suffix")"; then
-        _suffix="$_suffix \"$_dom\","
-    fi
+    add_dnsmasq_suffix "$(uci -q get dhcp.@dnsmasq[0].domain 2>/dev/null || true)"
     _suffix="$_suffix \"168.192.in-addr.arpa\", \"d.f.ip6.arpa\""
 
     # Emitted after the dnsmasq rule because match_forwarding_rule takes the

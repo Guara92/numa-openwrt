@@ -218,8 +218,9 @@ own `[[forwarding]]` block pointing at `100.100.100.100:53`. The suffix is never
 hardcoded: the repo holds no site data, so a device without tailscale, or with
 MagicDNS off, generates exactly the same file as before.
 
-Why it is a separate rule: the dnsmasq rule already carried the suffix, because
-`dhcp.@dnsmasq[0].domain` is the tailnet domain on this router. dnsmasq answers
+Why it is a separate rule: on the router this was measured on, the dnsmasq rule
+already carried the suffix, because `dhcp.@dnsmasq[0].domain` was set to the
+tailnet domain (see "LAN and tailnet share one namespace" below). dnsmasq answers
 those names from its static leases, which shadow the tailnet address, and REFUSES
 names it does not know. Measured on the Flint 4 before the change:
 
@@ -260,6 +261,43 @@ output is byte-identical to the previous version; with the dnsmasq domain set to
 on a v0.25.1 binary in all four cases, and `scripts/check-config.sh` covers the
 generated heredoc — including a byte-level check that the MagicDNS rule exists and
 follows the dnsmasq rule, which a config that merely parses does not prove.
+
+## LAN and tailnet share one namespace (2026-11-16)
+
+`dhcp.@dnsmasq[0].domain` can be the tailnet suffix. It was on the Flint 4 before
+any of this was installed, and `numa-ctl` never writes it. With it set, two things
+go wrong for clients that do not run Tailscale:
+
+- DHCP option 15 and the RA search list carry the tailnet suffix, so a bare
+  `host` becomes `host.<tailnet>.ts.net`.
+- dnsmasq registers leases as `<host>.<tailnet>.ts.net`. A host that is also a
+  tailnet node resolves to its `100.x` address through the MagicDNS rule.
+
+A LAN-only client cannot use that `100.x`. Measured with `tcpdump -ni tailscale0`
+on the router: the echo requests leave with the client's `192.168.1.x` source and
+no reply returns. `NetfilterMode=2` inserts tailscaled's `ts-forward` chain first
+in `FORWARD`; it ends in `-o tailscale0 -j ACCEPT`, and its SNAT only applies to
+packets that arrived from `tailscale0`. LAN traffic therefore skips fw3 and keeps
+its source.
+
+Fix: `uci set dhcp.@dnsmasq[0].domain=lan`, `uci commit dhcp`,
+`/etc/init.d/dnsmasq restart`. No numa restart is needed: `gen-config` already
+puts the dnsmasq domain in the forwarding rule, and with `domain=lan` that rule
+is unchanged. Clients keep the old search suffix until they renew their lease.
+Verified from a LAN client: `nslookup <host>` returns `<host>.lan` with the LAN
+address, and `resolvectl` shows `DNS Domain: lan`.
+
+What this does not fix: a non-Tailscale client that queries
+`<host>.<tailnet>.ts.net` explicitly still gets the `100.x` address, and it
+still cannot reach it. The firewall has no useful lever here:
+
+| Change | Result |
+|---|---|
+| `uci delete firewall.<lan→tailscale0 forwarding>` | None. `ts-forward` accepts the packet before fw3 sees it. |
+| `firewall.tailscale0.masq=1` | LAN clients reach online peers as the router. Gives the whole `lan` pool the router's tailnet access and drops per-device ACLs. Not applied. |
+| tailscale `--netfilter-mode=off` | Not tested. The router is an exit node and a subnet router, which rely on `ts-forward`. |
+
+The LAN-to-tailnet forwarding entry is created by the vendor UI, not by this repo.
 
 ## Upstream transport (2026-10-05)
 
@@ -329,6 +367,11 @@ closed by the firewall; the prefix enumeration is removed from `gen-config`.
   connect* (DNS or route), never a permission problem.
 - ⚠ the current LAN DHCP option-6 host - see RUNBOOK open decisions.
 - ⚠ GL UI DNS settings page can rewrite the dnsmasq port back to 53 - see RUNBOOK.
+- ⚠ `dhcp.@dnsmasq[0].domain=lan` survives a reboot and a Tailscale restart (not
+  yet confirmed after the 2026-11-16 change).
+- `console.gl-inet.com` is a `dhcp.@domain` entry (static override to the router).
+  numa forwards only the suffix list to dnsmasq, so it probably goes upstream
+  instead. Check with `dig console.gl-inet.com @<router>`.
 
 ## Workflow notes
 
