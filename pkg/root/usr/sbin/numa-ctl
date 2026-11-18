@@ -579,6 +579,40 @@ cmd_watchdog() {
 
 # --- status ----------------------------------------------------------------
 
+# Per-upstream answers and median time from /stats. Best effort: status must
+# still print when the API is down, the token is unreadable, or numa predates
+# the `upstreams` list. The API sits on the LAN address, so the request is not
+# loopback and needs the token (Basic auth, any user name).
+upstream_stats() {
+    command -v jsonfilter >/dev/null 2>&1 || return 0
+    _us_v4=$(lan_v4); _us_api=$(api_port)
+    [ -n "$_us_v4" ] && [ -n "$_us_api" ] || return 0
+    _us_tok=$(cat "$STATE_DIR/api_token" 2>/dev/null || true)
+    [ -n "$_us_tok" ] || _us_tok=$(cfg_get api_token)
+    if ! _us_j=$(http_get "http://numa:$_us_tok@$_us_v4:$_us_api/stats"); then
+        echo 'upstreams: unavailable (API down or token rejected)'
+        return 0
+    fi
+    _us_i=0
+    printf 'upstreams:\n'
+    while :; do
+        _us_a=$(jsonfilter -s "$_us_j" -e "@.upstreams[$_us_i].addr" 2>/dev/null || true)
+        [ -n "$_us_a" ] || break
+        _us_k=$(jsonfilter -s "$_us_j" -e "@.upstreams[$_us_i].kind" 2>/dev/null || true)
+        _us_n=$(jsonfilter -s "$_us_j" -e "@.upstreams[$_us_i].answers" 2>/dev/null || true)
+        _us_p=$(jsonfilter -s "$_us_j" -e "@.upstreams[$_us_i].p50_ms" 2>/dev/null || true)
+        _us_f=$(jsonfilter -s "$_us_j" -e "@.upstreams[$_us_i].asked_first" 2>/dev/null || true)
+        _us_x=$(jsonfilter -s "$_us_j" -e "@.upstreams[$_us_i].failed" 2>/dev/null || true)
+        _us_p=${_us_p:+${_us_p}ms}
+        printf '  %s  %s  answers=%s  p50=%s%s%s\n' "$_us_a" "${_us_k:-?}" "${_us_n:-0}" \
+            "${_us_p:--}" \
+            "$([ "$_us_f" = true ] && echo '  asked-first')" \
+            "$([ "$_us_x" = true ] && echo '  FAILED')"
+        _us_i=$((_us_i + 1))
+    done
+    [ "$_us_i" -gt 0 ] || echo '  (none reported)'
+}
+
 cmd_status() {
     printf 'version:   installed=%s\n' "$(installed_version)"
     _pid=$(numa_pid)
@@ -602,6 +636,7 @@ cmd_status() {
             break
         fi
     done
+    if [ -n "$_pid" ]; then upstream_stats; fi
     printf 'resolv.conf:\n'; sed 's/^/  /' /tmp/resolv.conf 2>/dev/null || true
     printf 'failed_open: %s\n' "$([ -f "$STATE_DIR/FAILED_OPEN" ] && echo yes || echo no)"
     printf 'install:  %s\n' "$(opkg list-installed numa 2>/dev/null | awk '{print $3}')"
@@ -767,7 +802,10 @@ mode       = "forward"
 address    = ["https://9.9.9.9/dns-query"]
 fallback   = ["https://1.1.1.1/dns-query"]
 timeout_ms = 800
-hedge_ms   = 50
+# After hedge_ms without an answer numa also asks the fallback and takes the
+# first reply, so each hedge shows that name to a second operator. 200 is the
+# upstream default; 0 keeps strict list order.
+hedge_ms   = 200
 
 [blocking]
 refresh_hours = 6

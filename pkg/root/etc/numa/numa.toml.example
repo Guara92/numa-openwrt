@@ -28,7 +28,11 @@ mode       = "forward"
 address    = ["https://9.9.9.9/dns-query"]
 fallback   = ["https://1.1.1.1/dns-query"]   # DoH only: no plaintext leak on failover
 timeout_ms = 800                  # upstream default is 5000
-hedge_ms   = 50                   # parallel query after 50ms of silence; 0 disables
+# After hedge_ms without an answer numa also asks the fallback (Cloudflare) and
+# takes the first reply, so every hedge sends that query's name to a second
+# operator. Median DoH time to Quad9 was ~30 ms from a workstation, so 50 ms would hedge a large
+# share of cache misses; 200 ms is the upstream default. 0 = strict list order.
+hedge_ms   = 200
 
 [blocking]
 refresh_hours = 6                 # upstream default is 24
