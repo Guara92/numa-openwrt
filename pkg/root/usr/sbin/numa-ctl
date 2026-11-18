@@ -92,15 +92,32 @@ http_get() {
 }
 
 # procd starts and restarts asynchronously: health() would otherwise read an
-# empty or stale pid and call a healthy daemon dead.
-wait_pid() { # wait_pid [tries]
+# empty or stale pid and call a healthy daemon dead. After a restart the old
+# daemon can still be listed for a moment, so the caller passes its pid and only
+# a different, live pid counts.
+wait_pid() { # wait_pid [old-pid] [tries]
     _i=0
-    while [ "$_i" -lt "${1:-20}" ]; do
-        _p=$(numa_pid)
-        [ -n "$_p" ] && { printf '%s' "$_p"; return 0; }
+    while [ "$_i" -lt "${2:-20}" ]; do
+        _l=$(pidof numa 2>/dev/null || true)
+        [ -n "$_l" ] || _l=$(pgrep -x numa 2>/dev/null || true)
+        for _p in $_l; do
+            if [ "$_p" != "${1:-}" ] && kill -0 "$_p" 2>/dev/null; then
+                printf '%s' "$_p"
+                return 0
+            fi
+        done
         _i=$((_i + 1)); sleep 1
     done
     return 1
+}
+
+# Restart numa and print the pid of the new process. A failed restart falls
+# through to wait_pid, which then times out, so callers take their failure path
+# instead of the script aborting with a half-applied package.
+restart_numa() {
+    _rn_old=$(numa_pid)
+    /etc/init.d/numa restart >&2 || true
+    wait_pid "$_rn_old"
 }
 
 probe() { # probe ADDR PORT NAME TYPE [tcp]
@@ -340,11 +357,10 @@ cmd_upgrade() {
 
     cmd_stage --ipk "$_ipk" || die "staged binary failed health; aborting upgrade"
     opkg install "$_ipk" || die "opkg install failed"
-    /etc/init.d/numa restart
     # A daemon that never appears is a failed upgrade, not a reason to stop:
     # the new package is already installed and must be rolled back like any
     # other health failure, or the router is left without a resolver.
-    if _pid=$(wait_pid); then
+    if _pid=$(restart_numa); then
         if health "$_pid" "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)"; then
             log "upgrade OK"
             return 0
@@ -355,8 +371,7 @@ cmd_upgrade() {
     fi
     [ -n "$_prev" ] || die "no previous ipk to roll back to"
     opkg install --force-downgrade "$_prev" || die "rollback install failed"
-    /etc/init.d/numa restart
-    _pid=$(wait_pid) || die "numa did not come back after the rollback"
+    _pid=$(restart_numa) || die "numa did not come back after the rollback"
     health "$_pid" "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)" || die "rollback still unhealthy"
     exit 1
 }
@@ -367,8 +382,7 @@ cmd_rollback() {
     _prev=$(list_ipks | sed -n '2p')
     [ -n "$_prev" ] || die "no previous ipk"
     opkg install --force-downgrade "$_prev" || die "rollback install failed"
-    /etc/init.d/numa restart
-    _pid=$(wait_pid) || die "numa did not come back after the rollback"
+    _pid=$(restart_numa) || die "numa did not come back after the rollback"
     health "$_pid" "$(lan_v4)" "$(ula_addr)" 53 "$(api_port)" || exit 1
     log "rollback OK"
 }
