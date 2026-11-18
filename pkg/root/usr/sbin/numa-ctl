@@ -591,6 +591,17 @@ cmd_status() {
         log "WARN: dnsmasq port is $_dport while numa expects 5354 - DHCP at risk"
     fi
     printf 'dnsmasq port: %s\n' "$_dport"
+    _dom=$(uci -q get dhcp.@dnsmasq[0].domain 2>/dev/null || true)
+    printf 'dnsmasq domain: %s\n' "${_dom:-none}"
+    # stderr discarded: the helper's "timeout not installed" warning is about
+    # gen-config and would mislead here; without it the check is skipped.
+    _ts=$(tailscale_magicdns_suffix 2>/dev/null || true)
+    for _d in $_dom; do
+        if ts_shadows "$(norm_suffix "$_d")" "$(norm_suffix "$_ts")"; then
+            log "WARN: dnsmasq domain '$_d' is the tailnet suffix: DHCP hands it to every client and LAN-only clients resolve tailnet peers to unreachable 100.x addresses (docs/NOTES.md)"
+            break
+        fi
+    done
     printf 'resolv.conf:\n'; sed 's/^/  /' /tmp/resolv.conf 2>/dev/null || true
     printf 'failed_open: %s\n' "$([ -f "$STATE_DIR/FAILED_OPEN" ] && echo yes || echo no)"
     printf 'install:  %s\n' "$(opkg list-installed numa 2>/dev/null | awk '{print $3}')"
@@ -615,6 +626,17 @@ ts_shadows() { # ts_shadows <rule-suffix> <tailnet-suffix>
         "$1"|*".$1") return 0 ;;
     esac
     return 1
+}
+
+# Appends a suffix to _suffix unless it is empty, already listed, or claimed by
+# the tailnet. Uses _ts_norm and _seen from cmd_gen_config.
+add_dnsmasq_suffix() { # add_dnsmasq_suffix <suffix>
+    _n=$(norm_suffix "$1")
+    [ -n "$_n" ] || return 0
+    ts_shadows "$_n" "$_ts_norm" && return 0
+    case " $_seen " in *" $_n "*) return 0 ;; esac
+    _seen="$_seen $_n"
+    _suffix="$_suffix \"$1\","
 }
 
 ts_forward_block() { # ts_forward_block <suffix>
@@ -702,16 +724,13 @@ cmd_gen_config() {
     # know. The suffix is read from the device, never hardcoded.
     _ts_suffix=$(tailscale_magicdns_suffix)
 
+    # local=/lan/ plus domain=lan is the normal setup; one "lan" entry is enough.
+    _ts_norm=$(norm_suffix "$_ts_suffix")
+    _seen=
     for _suf in $(uci -q get dhcp.@dnsmasq[0].local 2>/dev/null || true); do
-        _suf=$(echo "$_suf" | tr -d /)
-        [ -n "$_suf" ] || continue
-        ts_shadows "$(norm_suffix "$_suf")" "$(norm_suffix "$_ts_suffix")" && continue
-        _suffix="$_suffix \"$_suf\","
+        add_dnsmasq_suffix "$(echo "$_suf" | tr -d /)"
     done
-    _dom=$(uci -q get dhcp.@dnsmasq[0].domain 2>/dev/null || true)
-    if [ -n "$_dom" ] && ! ts_shadows "$(norm_suffix "$_dom")" "$(norm_suffix "$_ts_suffix")"; then
-        _suffix="$_suffix \"$_dom\","
-    fi
+    add_dnsmasq_suffix "$(uci -q get dhcp.@dnsmasq[0].domain 2>/dev/null || true)"
     _suffix="$_suffix \"168.192.in-addr.arpa\", \"d.f.ip6.arpa\""
 
     # Emitted after the dnsmasq rule because match_forwarding_rule takes the

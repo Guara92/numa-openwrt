@@ -18,6 +18,32 @@ router was reachable as `<host>.<tailnet>.ts.net` through a lease, that name now
 resolves to the tailnet address, which is the point of the rule but a change in
 behaviour for anything that pinned the old answer.
 
+Keep `dhcp.@dnsmasq[0].domain` a LAN-only name (`lan`), never the tailnet suffix.
+Otherwise DHCP hands the tailnet suffix to every client, bare names resolve to
+`100.x` addresses that non-Tailscale clients cannot reach, and leases collide
+with tailnet node names. On GL firmware `gl_tailscale` rewrites it on every
+`ifup`, so setting it by hand does not last: patch the script as described in
+`docs/NOTES.md` ("LAN and tailnet share one namespace"), and reapply the patch
+after a firmware upgrade.
+
+After changing the domain, run `uci commit dhcp && /etc/init.d/dnsmasq restart`.
+Clients pick up the new suffix on lease renewal.
+
+numa only forwards a name to dnsmasq if its suffix is in the `suffix` list of the
+active `[[forwarding]]` block in `/etc/numa/numa.toml`. `gen-config` builds that
+list from `local` and `domain` when it runs, so check it after any change:
+
+```sh
+grep -A2 '^\[\[forwarding\]\]' /etc/numa/numa.toml
+```
+
+The default `local=/lan/` with `domain=lan` already lists `lan`; nothing more is
+needed. If the new name is missing, add it to that list by hand, then
+`numa-ctl stage --binary /usr/sbin/numa` and `/etc/init.d/numa restart`. Do not
+run `gen-config --apply` on a customised file: it replaces the whole
+`numa.toml` and drops every `[[forwarding]]` rule you added, including GL dynamic
+DNS rules. `gen-config` without `--apply` prints a diff you can copy from.
+
 `numa-ctl` is the only supported way to enable, disable, upgrade and roll back.
 Nothing starts numa at install time.
 
