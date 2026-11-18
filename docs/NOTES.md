@@ -314,9 +314,10 @@ Costs:
 - The vendor's `server=/ts.net/100.100.100.100` line in `/etc/dnsmasq.conf` stays,
   and is harmless once leases are registered under `.lan`.
 
-No numa restart is needed for `domain=lan`: `gen-config` puts the dnsmasq domain
-in the forwarding rule, and `local=/lan/` already lists `lan`. Any other
-LAN-only name must be in that rule: see the RUNBOOK.
+`domain=lan` needs no numa restart only if the active `numa.toml` already lists
+`lan` in its dnsmasq `[[forwarding]]` suffix list, which a config generated with
+`local=/lan/` does. Check it as the RUNBOOK describes; any other LAN-only name
+has to be added to that list.
 
 What this does not fix: a non-Tailscale client that queries
 `<host>.<tailnet>.ts.net` explicitly still gets the `100.x` address, and it

@@ -27,12 +27,22 @@ with tailnet node names. On GL firmware `gl_tailscale` rewrites it on every
 after a firmware upgrade.
 
 After changing the domain, run `uci commit dhcp && /etc/init.d/dnsmasq restart`.
-Clients pick up the new suffix on lease renewal. The numa rule for dnsmasq names
-is built from `local` and `domain` when `gen-config` runs, so a name that is not
-already in the `suffix` list of the active `[[forwarding]]` block in
-`/etc/numa/numa.toml` needs `numa-ctl gen-config`, a review of the diff,
-`--apply`, `numa-ctl stage --binary /usr/sbin/numa`, then `/etc/init.d/numa restart`.
-The default `local=/lan/` with `domain=lan` already lists `lan`.
+Clients pick up the new suffix on lease renewal.
+
+numa only forwards a name to dnsmasq if its suffix is in the `suffix` list of the
+active `[[forwarding]]` block in `/etc/numa/numa.toml`. `gen-config` builds that
+list from `local` and `domain` when it runs, so check it after any change:
+
+```sh
+grep -A2 '^\[\[forwarding\]\]' /etc/numa/numa.toml
+```
+
+The default `local=/lan/` with `domain=lan` already lists `lan`; nothing more is
+needed. If the new name is missing, add it to that list by hand, then
+`numa-ctl stage --binary /usr/sbin/numa` and `/etc/init.d/numa restart`. Do not
+run `gen-config --apply` on a customised file: it replaces the whole
+`numa.toml` and drops every `[[forwarding]]` rule you added, including GL dynamic
+DNS rules. `gen-config` without `--apply` prints a diff you can copy from.
 
 `numa-ctl` is the only supported way to enable, disable, upgrade and roll back.
 Nothing starts numa at install time.
