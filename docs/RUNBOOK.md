@@ -18,12 +18,21 @@ router was reachable as `<host>.<tailnet>.ts.net` through a lease, that name now
 resolves to the tailnet address, which is the point of the rule but a change in
 behaviour for anything that pinned the old answer.
 
-Set `dhcp.@dnsmasq[0].domain` to a LAN-only name (for example `lan`), never to the
-tailnet suffix. Otherwise DHCP hands the tailnet suffix to every client, bare names
-resolve to `100.x` addresses that non-Tailscale clients cannot reach, and leases
-collide with tailnet node names. After changing it, run
-`uci commit dhcp && /etc/init.d/dnsmasq restart`; `gen-config` and a numa restart
-are not needed. Clients pick up the new suffix on lease renewal. See `docs/NOTES.md`.
+Keep `dhcp.@dnsmasq[0].domain` a LAN-only name (`lan`), never the tailnet suffix.
+Otherwise DHCP hands the tailnet suffix to every client, bare names resolve to
+`100.x` addresses that non-Tailscale clients cannot reach, and leases collide
+with tailnet node names. On GL firmware `gl_tailscale` rewrites it on every
+`ifup`, so setting it by hand does not last: patch the script as described in
+`docs/NOTES.md` ("LAN and tailnet share one namespace"), and reapply the patch
+after a firmware upgrade.
+
+After changing the domain, run `uci commit dhcp && /etc/init.d/dnsmasq restart`.
+Clients pick up the new suffix on lease renewal. The numa rule for dnsmasq names
+is built from `local` and `domain` when `gen-config` runs, so a name that is not
+already in the `suffix` list of the active `[[forwarding]]` block in
+`/etc/numa/numa.toml` needs `numa-ctl gen-config`, a review of the diff,
+`--apply`, `numa-ctl stage --binary /usr/sbin/numa`, then `/etc/init.d/numa restart`.
+The default `local=/lan/` with `domain=lan` already lists `lan`.
 
 `numa-ctl` is the only supported way to enable, disable, upgrade and roll back.
 Nothing starts numa at install time.

@@ -264,9 +264,15 @@ follows the dnsmasq rule, which a config that merely parses does not prove.
 
 ## LAN and tailnet share one namespace (2026-11-16)
 
-`dhcp.@dnsmasq[0].domain` can be the tailnet suffix. It was on the Flint 4 before
-any of this was installed, and `numa-ctl` never writes it. With it set, two things
-go wrong for clients that do not run Tailscale:
+`dhcp.@dnsmasq[0].domain` is the tailnet suffix on the Flint 4, and `numa-ctl`
+never writes it. The vendor script `/usr/bin/gl_tailscale` (firmware 4.9.2) does:
+while `tailscale.settings.enabled=1`, `/etc/hotplug.d/iface/19-tailscale-iface`
+runs `gl_tailscale restart` on every `ifup`, and that sets `domain` to
+`tailscale status`'s `MagicDNSSuffix` (also from `start_dns_poller`, up to 15
+tries). The stock value is saved once in `tailscale.settings.original_domain` and
+restored only when Tailscale is disabled. So a hand-set `domain=lan` reverts on
+the next `ifup` or reboot. With the suffix set, two things go wrong for clients
+that do not run Tailscale:
 
 - DHCP option 15 and the RA search list carry the tailnet suffix, so a bare
   `host` becomes `host.<tailnet>.ts.net`.
@@ -280,12 +286,36 @@ in `FORWARD`; it ends in `-o tailscale0 -j ACCEPT`, and its SNAT only applies to
 packets that arrived from `tailscale0`. LAN traffic therefore skips fw3 and keeps
 its source.
 
-Fix: `uci set dhcp.@dnsmasq[0].domain=lan`, `uci commit dhcp`,
-`/etc/init.d/dnsmasq restart`. No numa restart is needed: `gen-config` already
-puts the dnsmasq domain in the forwarding rule, and with `domain=lan` that rule
-is unchanged. Clients keep the old search suffix until they renew their lease.
-Verified from a LAN client: `nslookup <host>` returns `<host>.lan` with the LAN
-address, and `resolvectl` shows `DNS Domain: lan`.
+Fix: stop `gl_tailscale` writing `domain`, then set it once. The four
+`uci set dhcp.@dnsmasq[0].domain=...` lines (119, 155, 171, 175 on 4.9.2) become
+a no-op `:`, so no `if`/`else` block ends up empty:
+
+```sh
+cp -a /usr/bin/gl_tailscale /root/gl_tailscale.orig
+sed -i 's|uci set dhcp\.@dnsmasq\[0\]\.domain=|: |' /usr/bin/gl_tailscale
+sh -n /usr/bin/gl_tailscale && echo syntax ok
+uci set dhcp.@dnsmasq[0].domain=lan && uci commit dhcp
+/etc/init.d/dnsmasq restart
+```
+
+Verified on the device: `domain` stayed `lan` after
+`ACTION=ifup INTERFACE=lan sh /etc/hotplug.d/iface/19-tailscale-iface` and after a
+reboot. From a LAN client, `nslookup <host>` returns `<host>.lan` with the LAN
+address and `resolvectl` shows `DNS Domain: lan`; clients keep the old search
+suffix until they renew their lease.
+
+Costs:
+
+- A firmware upgrade restores the stock script and the suffix returns. Reapply the
+  patch; `status` does not detect this yet.
+- LAN clients lose the vendor's bare tailnet names. Those resolved to `100.x`
+  addresses they could not reach, so nothing usable is lost.
+- The vendor's `server=/ts.net/100.100.100.100` line in `/etc/dnsmasq.conf` stays,
+  and is harmless once leases are registered under `.lan`.
+
+No numa restart is needed for `domain=lan`: `gen-config` puts the dnsmasq domain
+in the forwarding rule, and `local=/lan/` already lists `lan`. Any other
+LAN-only name must be in that rule: see the RUNBOOK.
 
 What this does not fix: a non-Tailscale client that queries
 `<host>.<tailnet>.ts.net` explicitly still gets the `100.x` address, and it
@@ -367,8 +397,9 @@ closed by the firewall; the prefix enumeration is removed from `gen-config`.
   connect* (DNS or route), never a permission problem.
 - ⚠ the current LAN DHCP option-6 host - see RUNBOOK open decisions.
 - ⚠ GL UI DNS settings page can rewrite the dnsmasq port back to 53 - see RUNBOOK.
-- ⚠ `dhcp.@dnsmasq[0].domain=lan` survives a reboot and a Tailscale restart (not
-  yet confirmed after the 2026-11-16 change).
+- ⚠ After a firmware upgrade `gl_tailscale` is stock again and rewrites
+  `dhcp.@dnsmasq[0].domain` to the tailnet suffix; reapply the patch from
+  "LAN and tailnet share one namespace".
 - `console.gl-inet.com` is a `dhcp.@domain` entry (static override to the router).
   numa forwards only the suffix list to dnsmasq, so it probably goes upstream
   instead. Check with `dig console.gl-inet.com @<router>`.
