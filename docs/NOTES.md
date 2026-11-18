@@ -261,6 +261,21 @@ crate version, so mimalloc and every dependency are as in v0.25.1.
   under qemu on a baseline CPU; no equivalent gate is added here, since the
   target hardware is fixed.
 
+## Upgrade rolled back a healthy daemon (2026-11-18)
+
+First `numa-ctl upgrade` to 0.25.2 on the Flint 4 failed `H1 fail: numa (pid
+6669) not running` and rolled back; the same command minutes later succeeded.
+`logread` shows the 0.25.2 daemon (pid 27108) listening and loading its lists in
+the second the failure was logged, then stopped by the rollback. Pid 6669 was the
+old 0.25.1 daemon: `/etc/init.d/numa restart` returns before it has exited, and
+`wait_pid` took the first pid `pidof` listed.
+
+`wait_pid` now takes the pre-restart pid and accepts only a live pid that differs
+from it; `restart_numa` wraps restart + wait for `upgrade` and both rollback
+paths. Off-device check with a stub `pidof` and real processes: old pid listed
+alone, listed first next to the new one, new one only, nothing listed, a dead pid
+listed, and the old pid forever (times out, rc 1).
+
 ## Tailscale MagicDNS (2026-11-15)
 
 `gen-config` reads the tailnet suffix from `tailscale status --json`
