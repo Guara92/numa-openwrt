@@ -307,7 +307,8 @@ suffix until they renew their lease.
 Costs:
 
 - A firmware upgrade restores the stock script and the suffix returns. Reapply the
-  patch; `status` does not detect this yet.
+  patch. `numa-ctl status` prints `dnsmasq domain:` and warns when it is the
+  tailnet suffix (or a parent of it), so run it after an upgrade.
 - LAN clients lose the vendor's bare tailnet names. Those resolved to `100.x`
   addresses they could not reach, so nothing usable is lost.
 - The vendor's `server=/ts.net/100.100.100.100` line in `/etc/dnsmasq.conf` stays,

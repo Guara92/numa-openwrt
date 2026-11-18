@@ -591,6 +591,17 @@ cmd_status() {
         log "WARN: dnsmasq port is $_dport while numa expects 5354 - DHCP at risk"
     fi
     printf 'dnsmasq port: %s\n' "$_dport"
+    _dom=$(uci -q get dhcp.@dnsmasq[0].domain 2>/dev/null || true)
+    printf 'dnsmasq domain: %s\n' "${_dom:-none}"
+    # stderr discarded: the helper's "timeout not installed" warning is about
+    # gen-config and would mislead here; without it the check is skipped.
+    _ts=$(tailscale_magicdns_suffix 2>/dev/null || true)
+    for _d in $_dom; do
+        if ts_shadows "$(norm_suffix "$_d")" "$(norm_suffix "$_ts")"; then
+            log "WARN: dnsmasq domain '$_d' is the tailnet suffix: DHCP hands it to every client and LAN-only clients resolve tailnet peers to unreachable 100.x addresses (docs/NOTES.md)"
+            break
+        fi
+    done
     printf 'resolv.conf:\n'; sed 's/^/  /' /tmp/resolv.conf 2>/dev/null || true
     printf 'failed_open: %s\n' "$([ -f "$STATE_DIR/FAILED_OPEN" ] && echo yes || echo no)"
     printf 'install:  %s\n' "$(opkg list-installed numa 2>/dev/null | awk '{print $3}')"
