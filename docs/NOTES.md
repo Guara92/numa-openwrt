@@ -3,14 +3,14 @@
 Verification log. `⚠` items from the design notes get a line here once checked
 on the device or in CI. Keep it factual: command, result.
 
-## Pins (re-verified 2026-11-15)
+## Pins (re-verified 2026-11-18)
 
-- upstream tag `v0.25.1` -> commit `1073889d217c6ecc9ec1a560675b1e192100bd18` (latest release).
-- mimalloc comes from upstream: v0.25.1 depends on `mimalloc 0.1.52` and
+- upstream tag `v0.25.2` -> commit `e966c0658eb65211429a29b01d194e7c68d517c1` (latest release).
+- mimalloc comes from upstream: v0.25.2 depends on `mimalloc 0.1.52` and
   `libmimalloc-sys 0.1.49` under `cfg(target_env = "musl")`, so this repo applies
   no patch. `cargo tree --target aarch64-unknown-linux-musl` lists both; the gnu
-  target lists neither. Both versions are unchanged from v0.25.0.
-- rust pinned `1.100.0`. v0.25.1 has no `rust-version` and builds on it: the host
+  target lists neither. Both versions are unchanged since v0.25.0.
+- rust pinned `1.100.0`. v0.25.2 has no `rust-version` and builds on it: the host
   build (`rustup run 1.100.0 cargo build --release --locked`) succeeds.
 - `-C target-cpu=cortex-a73` target features (rustc 1.100.0, `aarch64-unknown-linux-musl`):
   `aes crc neon pmuv3 sha2` (+ `crt-static`). Mapped to cpuinfo: `aes pmull crc32 asimd sha1 sha2`
@@ -209,6 +209,57 @@ Checked against the tag source and the published `numa-linux-aarch64.tar.gz`
 - Packaging dry run with the published aarch64 binary (`VERSION=0.25.1-1 sh
   scripts/mkipk.sh`): `numa_0.25.1-1_aarch64_cortex-a53.ipk`, `Architecture`
   and `conffiles` unchanged, data tar `root:root`. CI produces the real one.
+
+## Config and behaviour on v0.25.2 (2026-11-18)
+
+Checked against the tag source and the published `numa-linux-aarch64.tar.gz`
+(4763043 B, sha256 `dac50032…1116c37`, inner binary 9731376 B, static, `numa 0.25.2`). `Cargo.lock` changes only the
+crate version, so mimalloc and every dependency are as in v0.25.1.
+
+- Config keys: no key added or removed. `scripts/check-config.sh` against a v0.25.2
+  host build (rust 1.100.0): zero unknown keys for `numa.toml.example`,
+  `tests/smoke.toml` and the `gen-config` heredoc.
+- Blocklist downloads now resolve through numa's own pipeline (configured
+  upstream, cache), not `bootstrap_resolver` (upstream #507, reported from this
+  repo). Observed on a v0.25.2 host build with the shipped DoH pair:
+  `cdn.jsdelivr.net` loaded 252576 domains, and the bootstrap resolver logged
+  only its start-up line. This lifts the limit recorded under v0.25.1 ("the
+  blocklist download still resolves through `bootstrap_resolver`"): with
+  IP-literal DoH, no name leaves in plaintext any more. A list host that is
+  itself blocked does not stop its own refresh.
+- `hedge_ms` changed meaning and default. It was a duplicate query to the same
+  upstream, default 0. It is now the delay before numa also asks the *next*
+  upstream, default 200, and a single upstream gets no second query. With the
+  shipped primary + `fallback`, each hedge shows that name to Cloudflare as well.
+  The earlier `hedge_ms = 50` (copied from the HA add-on) was chosen under the old
+  meaning. How often Quad9 DoH takes longer than 50 ms from the router is not
+  measured; the 30 ms median in `/stats` (3 answers, from a workstation) says
+  nothing about that tail. Both shipped configs now set `hedge_ms = 200`, upstream's
+  default. Upstream's own figure at 200 ms is +7% upstream queries for p99
+  869 -> 476 ms. [TBD: router measurement of the hedge rate and the p99 there.]
+- **Existing installs keep `hedge_ms = 50`**: an upgrade replaces the package, not
+  `/etc/numa/numa.toml`, and `gen-config --apply` would overwrite local
+  `[[forwarding]]` rules. Change only that key, then restart:
+
+  ```sh
+  sed -i 's/^[[:space:]]*hedge_ms[[:space:]]*=[[:space:]]*50[[:space:]]*\(#.*\)\{0,1\}$/hedge_ms   = 200/' /etc/numa/numa.toml &&
+    grep -Eq '^[[:space:]]*hedge_ms[[:space:]]*=[[:space:]]*200([[:space:]]|#|$)' /etc/numa/numa.toml &&
+    /etc/init.d/numa restart
+  ```
+
+- Primary racing needs two or more primaries of the same kind. The shipped config
+  has one primary and the second operator in `fallback`, so no racing happens and
+  list order is fixed. Moving Cloudflare into `address` would turn on the 1-in-20
+  race (`srtt = false` disables it).
+- `/stats` has an `upstreams` list (`addr`, `kind`, `asked_first`, `failed`,
+  `answers`, `p50_ms`); the dashboard Outbound Wire panel shows it. `numa-ctl status`
+  prints it (answers, median time, which upstream is asked first, failed flag).
+- `/blocking/pause` and overrides answer 400 for a duration the clock cannot
+  represent. `numa-ctl` does not call either.
+- The x86_64 AVX2 crash of v0.25.1 does not touch this repo: the ipk is built from
+  source on arm64 for the Flint 4 only. Upstream now runs each release binary
+  under qemu on a baseline CPU; no equivalent gate is added here, since the
+  target hardware is fixed.
 
 ## Tailscale MagicDNS (2026-11-15)
 
