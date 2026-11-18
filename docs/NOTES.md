@@ -231,11 +231,21 @@ crate version, so mimalloc and every dependency are as in v0.25.1.
   upstream, default 0. It is now the delay before numa also asks the *next*
   upstream, default 200, and a single upstream gets no second query. With the
   shipped primary + `fallback`, each hedge shows that name to Cloudflare as well.
-  The earlier `hedge_ms = 50` (copied from the HA add-on) would do that for a
-  large share of cache misses: Quad9 DoH p50 was 30 ms in `/stats` (3 answers) from a
-  workstation. Both shipped configs now set `hedge_ms = 200`. Upstream's own
-  figure at 200 ms is +7% upstream queries for p99 869 -> 476 ms. [TBD: router
-  measurement of the hedge rate and the p99 there.]
+  The earlier `hedge_ms = 50` (copied from the HA add-on) was chosen under the old
+  meaning. How often Quad9 DoH takes longer than 50 ms from the router is not
+  measured; the 30 ms median in `/stats` (3 answers, from a workstation) says
+  nothing about that tail. Both shipped configs now set `hedge_ms = 200`, upstream's
+  default. Upstream's own figure at 200 ms is +7% upstream queries for p99
+  869 -> 476 ms. [TBD: router measurement of the hedge rate and the p99 there.]
+- **Existing installs keep `hedge_ms = 50`**: an upgrade replaces the package, not
+  `/etc/numa/numa.toml`, and `gen-config --apply` would overwrite local
+  `[[forwarding]]` rules. Change only that key, then restart:
+
+  ```sh
+  sed -i 's/^hedge_ms[[:space:]]*=[[:space:]]*50[[:space:]]*\(#.*\)\{0,1\}$/hedge_ms   = 200/' /etc/numa/numa.toml
+  grep '^hedge_ms' /etc/numa/numa.toml && /etc/init.d/numa restart
+  ```
+
 - Primary racing needs two or more primaries of the same kind. The shipped config
   has one primary and the second operator in `fallback`, so no racing happens and
   list order is fixed. Moving Cloudflare into `address` would turn on the 1-in-20

@@ -579,17 +579,29 @@ cmd_watchdog() {
 
 # --- status ----------------------------------------------------------------
 
+# GET with the API token as a Bearer header. The header goes to curl on stdin
+# (-K -), so the token never appears in any process's argv; uclient-fetch has
+# no equivalent, so there is no fallback to it.
+http_get_token() { # http_get_token <url> <token>
+    command -v curl >/dev/null 2>&1 || return 1
+    _ht_tok=$(printf '%s' "$2" | sed 's/[\\"]/\\&/g')
+    _ht_out=$(printf 'header = "Authorization: Bearer %s"\n' "$_ht_tok" \
+        | curl -fsS -m 10 -K - "$1" 2>/dev/null) || return 1
+    printf '%s' "$_ht_out"
+}
+
 # Per-upstream answers and median time from /stats. Best effort: status must
 # still print when the API is down, the token is unreadable, or numa predates
 # the `upstreams` list. The API sits on the LAN address, so the request is not
-# loopback and needs the token (Basic auth, any user name).
+# loopback and needs the token.
 upstream_stats() {
     command -v jsonfilter >/dev/null 2>&1 || return 0
     _us_v4=$(lan_v4); _us_api=$(api_port)
     [ -n "$_us_v4" ] && [ -n "$_us_api" ] || return 0
+    command -v curl >/dev/null 2>&1 || { echo 'upstreams: unavailable (needs curl to send the API token)'; return 0; }
     _us_tok=$(cat "$STATE_DIR/api_token" 2>/dev/null || true)
     [ -n "$_us_tok" ] || _us_tok=$(cfg_get api_token)
-    if ! _us_j=$(http_get "http://numa:$_us_tok@$_us_v4:$_us_api/stats"); then
+    if ! _us_j=$(http_get_token "http://$_us_v4:$_us_api/stats" "$_us_tok"); then
         echo 'upstreams: unavailable (API down or token rejected)'
         return 0
     fi
