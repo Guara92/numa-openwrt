@@ -242,8 +242,9 @@ crate version, so mimalloc and every dependency are as in v0.25.1.
   `[[forwarding]]` rules. Change only that key, then restart:
 
   ```sh
-  sed -i 's/^hedge_ms[[:space:]]*=[[:space:]]*50[[:space:]]*\(#.*\)\{0,1\}$/hedge_ms   = 200/' /etc/numa/numa.toml
-  grep '^hedge_ms' /etc/numa/numa.toml && /etc/init.d/numa restart
+  sed -i 's/^[[:space:]]*hedge_ms[[:space:]]*=[[:space:]]*50[[:space:]]*\(#.*\)\{0,1\}$/hedge_ms   = 200/' /etc/numa/numa.toml &&
+    grep -Eq '^[[:space:]]*hedge_ms[[:space:]]*=[[:space:]]*200([[:space:]]|#|$)' /etc/numa/numa.toml &&
+    /etc/init.d/numa restart
   ```
 
 - Primary racing needs two or more primaries of the same kind. The shipped config

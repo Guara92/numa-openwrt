@@ -581,12 +581,13 @@ cmd_watchdog() {
 
 # GET with the API token as a Bearer header. The header goes to curl on stdin
 # (-K -), so the token never appears in any process's argv; uclient-fetch has
-# no equivalent, so there is no fallback to it.
+# no equivalent, so there is no fallback to it. -q and --noproxy keep ~/.curlrc
+# and an exported http_proxy from redirecting the token to another host.
 http_get_token() { # http_get_token <url> <token>
     command -v curl >/dev/null 2>&1 || return 1
     _ht_tok=$(printf '%s' "$2" | sed 's/[\\"]/\\&/g')
     _ht_out=$(printf 'header = "Authorization: Bearer %s"\n' "$_ht_tok" \
-        | curl -fsS -m 10 -K - "$1" 2>/dev/null) || return 1
+        | curl -q -fsS -m 10 --noproxy '*' -K - "$1" 2>/dev/null) || return 1
     printf '%s' "$_ht_out"
 }
 
